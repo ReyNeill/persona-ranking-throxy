@@ -63,6 +63,29 @@ export function RankingTable({ leads }: RankingTableProps) {
         cell: ({ row }) => row.original.title ?? "Unknown",
       },
       {
+        accessorKey: "rank",
+        header: ({ column }) => {
+          const sort = column.getIsSorted()
+          return (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 px-2"
+              onClick={() =>
+                column.toggleSorting(column.getIsSorted() === "asc")
+              }
+            >
+              Rank
+              <span className="text-muted-foreground ml-1 text-xs">
+                {sort === "asc" ? "^" : sort === "desc" ? "v" : ""}
+              </span>
+            </Button>
+          )
+        },
+        cell: ({ row }) => row.original.rank ?? "—",
+        sortingFn: "basic",
+      },
+      {
         accessorKey: "score",
         header: ({ column }) => {
           const sort = column.getIsSorted()

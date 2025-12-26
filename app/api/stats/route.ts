@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 
-import { createSupabaseServerClient } from "@/lib/supabase/server"
+import { createSupabaseServerClientOptional } from "@/lib/supabase/server"
 
 export const runtime = "nodejs"
 
@@ -60,7 +60,21 @@ function summarize(rows: AiCallRow[]): StatsSummary {
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
   const runId = searchParams.get("runId")
-  const supabase = createSupabaseServerClient()
+  const supabase = createSupabaseServerClientOptional()
+  if (!supabase) {
+    return NextResponse.json({
+      totals: {
+        callCount: 0,
+        totalCost: null,
+        avgCost: null,
+        inputTokens: 0,
+        outputTokens: 0,
+        documents: 0,
+      },
+      byProvider: [],
+      run: null,
+    })
+  }
 
   const { data, error } = await supabase
     .from("ai_calls")

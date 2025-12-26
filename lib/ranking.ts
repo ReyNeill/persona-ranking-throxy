@@ -7,7 +7,10 @@ import {
 import { cohere } from "@ai-sdk/cohere"
 
 import { getOpenRouterModel } from "@/lib/ai/openrouter"
-import { createSupabaseServerClient } from "@/lib/supabase/server"
+import {
+  createSupabaseServerClient,
+  createSupabaseServerClientOptional,
+} from "@/lib/supabase/server"
 
 type LeadRow = {
   id: string
@@ -478,7 +481,10 @@ export async function runRanking({
 }
 
 export async function getRankingResults(runId?: string | null) {
-  const supabase = createSupabaseServerClient()
+  const supabase = createSupabaseServerClientOptional()
+  if (!supabase) {
+    return null
+  }
 
   let run: any = null
   if (runId) {
