@@ -1,36 +1,71 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+Persona Ranking Throxy
+======================
 
-## Getting Started
+## Local setup
 
-First, run the development server:
+1) Install dependencies
+
+```bash
+npm install
+```
+
+2) Create `.env.local`
+
+```
+SUPABASE_URL=...
+SUPABASE_SERVICE_ROLE_KEY=...
+COHERE_API_KEY=...
+OPENROUTER_API_KEY=...
+RERANK_MODEL=rerank-v3.5
+OPENROUTER_MODEL=openai/gpt-4o-mini
+```
+
+3) Apply the database schema
+
+- Run the SQL in `supabase/migrations/20251226_persona_ranking.sql` on your Supabase project.
+
+4) Load leads (CSV ingestion)
+
+```bash
+npm run ingest:leads -- --file path/to/leads.csv
+```
+
+5) Start the app
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open `http://localhost:3000` to run ranking from the UI.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Architecture overview
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+- Data model in Postgres/Supabase: companies, leads, personas, ranking runs, lead rankings.
+- CSV ingestion via `scripts/ingest-leads.mjs` (server-side, no UI required).
+- Ranking pipeline in `/api/rank`:
+  - (Optional) OpenRouter summarizes the persona spec into a concise query.
+  - Cohere Rerank scores each lead per company.
+  - Results are stored in `lead_rankings` and shown in the UI.
+- Results view in the homepage table, grouped by company.
 
-## Learn More
+## Key decisions
 
-To learn more about Next.js, take a look at the following resources:
+- **Per-company ranking**: we rank and select top N within each company to avoid over-contacting one account.
+- **Relevance gating**: a min score threshold prevents obviously irrelevant roles from being selected.
+- **Reusable pipeline**: ranking runs are stored independently, so future CSVs can be ingested and re-ranked without changing code.
+- **AI providers**: OpenRouter for persona summarization, Cohere Rerank for deterministic ranking.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Tradeoffs
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- **Sync ranking**: the pipeline runs in a single API request. For larger CSVs, this should move to a background job/queue.
+- **No auth / RLS policy**: MVP uses a service role key server-side only. Production should add auth and RLS.
+- **Heuristic reasons**: reasons are templated rather than generated for every lead to keep latency and costs low.
 
-## Deploy on Vercel
+## Deploy
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- Deploy to Vercel and set the same environment variables.
+- Configure the Supabase project URL and service role key in the Vercel dashboard.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Notes
+
+- The MVP expects a `COHERE_API_KEY` for reranking. If you want to swap providers, update `lib/ranking.ts`.
