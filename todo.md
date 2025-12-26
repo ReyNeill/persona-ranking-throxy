@@ -1,4 +1,4 @@
-- [ ] Track cost per AI call + show statistics.
+- [x] Track cost per AI call + show statistics.
 - [ ] Make the table sortable by rank.
 - [ ] Export top N people per company to CSV.
 - [ ] Add and rank new leads through CSV uploads.

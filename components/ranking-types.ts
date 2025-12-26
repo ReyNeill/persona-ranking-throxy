@@ -25,3 +25,18 @@ export type RankingResponse = {
   personaSpec?: string | null
   companies: CompanyResult[]
 }
+
+export type StatsSummary = {
+  callCount: number
+  totalCost: number | null
+  avgCost: number | null
+  inputTokens: number
+  outputTokens: number
+  documents: number
+}
+
+export type StatsResponse = {
+  totals: StatsSummary
+  byProvider: Array<StatsSummary & { provider: string }>
+  run: StatsSummary | null
+}

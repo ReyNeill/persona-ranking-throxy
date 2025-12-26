@@ -26,6 +26,7 @@
 
 ## Agent-Specific Instructions
 - For UI work, always use the shadcn MCP tools to source components and examples before implementation.
+- AI SDK DevTools can be enabled locally with `AI_DEVTOOLS=true` and `bunx @ai-sdk/devtools` (never in production).
 
 ## Testing Guidelines
 - No test framework configured yet.
@@ -40,6 +41,8 @@
 - Server-side operations require `SUPABASE_SERVICE_ROLE_KEY`.
 - Keep `.env.local` out of version control; reference `.env.example` for required vars.
 - AI keys are required for ranking (`COHERE_API_KEY`, optional `OPENROUTER_API_KEY`).
+- Enable OpenRouter usage accounting with `OPENROUTER_USAGE=true` to capture per-call costs.
+- For exact Cohere rerank costs, set `COHERE_RERANK_COST_PER_SEARCH` or `COHERE_RERANK_COST_PER_1K_SEARCHES`.
 
 ## TODO
 - Update OpenRouter integration to fully match AI SDK v6 typings as soon as the provider supports it.

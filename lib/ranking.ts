@@ -1,4 +1,9 @@
-import { generateText, rerank } from "ai"
+import {
+  generateText,
+  rerank,
+  wrapLanguageModel,
+  type LanguageModelUsage,
+} from "ai"
 import { cohere } from "@ai-sdk/cohere"
 
 import { getOpenRouterModel } from "@/lib/ai/openrouter"
@@ -70,9 +75,49 @@ type CompanyResults = {
   leads: RankedLead[]
 }
 
+type PersonaQueryResult = {
+  query: string
+  usage?: LanguageModelUsage
+  modelId?: string
+  provider?: string
+  costUsd?: number | null
+  metadata?: Record<string, unknown> | null
+}
+
 const DEFAULT_RERANK_MODEL = process.env.RERANK_MODEL ?? "rerank-v3.5"
 const DEFAULT_OPENROUTER_MODEL =
   process.env.OPENROUTER_MODEL ?? "openai/gpt-4o-mini"
+const OPENROUTER_INPUT_COST = Number.parseFloat(
+  process.env.OPENROUTER_COST_PER_1K_INPUT ??
+    process.env.AI_COST_PER_1K_INPUT ??
+    ""
+)
+const OPENROUTER_OUTPUT_COST = Number.parseFloat(
+  process.env.OPENROUTER_COST_PER_1K_OUTPUT ??
+    process.env.AI_COST_PER_1K_OUTPUT ??
+    ""
+)
+const OPENROUTER_TOTAL_COST = Number.parseFloat(
+  process.env.OPENROUTER_COST_PER_1K_TOKENS ??
+    process.env.AI_COST_PER_1K_TOKENS ??
+    ""
+)
+const RERANK_COST_PER_SEARCH = Number.parseFloat(
+  process.env.COHERE_RERANK_COST_PER_SEARCH ??
+    process.env.RERANK_COST_PER_SEARCH ??
+    ""
+)
+const RERANK_COST_PER_1K_SEARCHES = Number.parseFloat(
+  process.env.COHERE_RERANK_COST_PER_1K_SEARCHES ??
+    process.env.RERANK_COST_PER_1K_SEARCHES ??
+    ""
+)
+const RERANK_COST_PER_1K_DOCS = Number.parseFloat(
+  process.env.COHERE_RERANK_COST_PER_1K_DOCS ??
+    process.env.RERANK_COST_PER_1K_DOCS ??
+    process.env.AI_COST_RERANK_PER_1K_DOCS ??
+    ""
+)
 
 function formatLeadText(lead: LeadRow) {
   const parts = [
@@ -86,14 +131,77 @@ function formatLeadText(lead: LeadRow) {
   return parts.join(" | ")
 }
 
-async function buildPersonaQuery(personaSpec: string) {
-  const model = getOpenRouterModel(DEFAULT_OPENROUTER_MODEL)
-  if (!model) return personaSpec
+function normalizeRate(value: number) {
+  return Number.isFinite(value) ? value : null
+}
+
+const openrouterInputRate = normalizeRate(OPENROUTER_INPUT_COST)
+const openrouterOutputRate = normalizeRate(OPENROUTER_OUTPUT_COST)
+const openrouterTotalRate = normalizeRate(OPENROUTER_TOTAL_COST)
+const rerankSearchRate = normalizeRate(RERANK_COST_PER_SEARCH)
+const rerankSearchRatePer1k = normalizeRate(RERANK_COST_PER_1K_SEARCHES)
+const rerankDocRate = normalizeRate(RERANK_COST_PER_1K_DOCS)
+
+function computeGenerationCost(usage?: LanguageModelUsage) {
+  if (!usage) return null
+  const inputTokens = usage.inputTokens ?? 0
+  const outputTokens = usage.outputTokens ?? 0
+  const totalTokens = usage.totalTokens ?? inputTokens + outputTokens
+
+  if (openrouterInputRate !== null || openrouterOutputRate !== null) {
+    return (
+      (inputTokens / 1000) * (openrouterInputRate ?? 0) +
+      (outputTokens / 1000) * (openrouterOutputRate ?? 0)
+    )
+  }
+
+  if (openrouterTotalRate !== null) {
+    return (totalTokens / 1000) * openrouterTotalRate
+  }
+
+  return null
+}
+
+function computeRerankCost(documentsCount: number) {
+  if (rerankSearchRate !== null) return rerankSearchRate
+  if (rerankSearchRatePer1k !== null) return rerankSearchRatePer1k / 1000
+  if (rerankDocRate === null) return null
+  return (documentsCount / 1000) * rerankDocRate
+}
+
+async function wrapWithDevtools(model: ReturnType<typeof getOpenRouterModel>) {
+  if (!model) return null
+  if (process.env.NODE_ENV === "production") return model
+  if (process.env.AI_DEVTOOLS !== "true") return model
+
+  const specVersion = (model as { specificationVersion?: string })
+    .specificationVersion
+  if (specVersion !== "v3") {
+    return model
+  }
 
   try {
-    const { text } = await generateText({
-      // OpenRouter SDK model types don't match AI SDK language model typings yet.
+    const { devToolsMiddleware } = await import("@ai-sdk/devtools")
+    return wrapLanguageModel({
       model: model as any,
+      middleware: devToolsMiddleware(),
+    })
+  } catch {
+    return model
+  }
+}
+
+async function buildPersonaQuery(
+  personaSpec: string
+): Promise<PersonaQueryResult> {
+  const model = getOpenRouterModel(DEFAULT_OPENROUTER_MODEL)
+  if (!model) return { query: personaSpec }
+
+  try {
+    const wrappedModel = await wrapWithDevtools(model)
+    const result = await generateText({
+      // OpenRouter SDK model types don't match AI SDK language model typings yet.
+      model: wrappedModel as any,
       prompt: [
         "You are helping rank company contacts for outbound sales.",
         "Rewrite the persona spec into a concise, single-paragraph query that",
@@ -104,10 +212,23 @@ async function buildPersonaQuery(personaSpec: string) {
       ].join("\n"),
     })
 
-    const cleaned = text.trim()
-    return cleaned.length > 0 ? cleaned : personaSpec
+    const cleaned = result.text.trim()
+    const openrouterUsage =
+      (result.providerMetadata as any)?.openrouter?.usage ?? null
+    const costUsd =
+      typeof openrouterUsage?.cost === "number"
+        ? openrouterUsage.cost
+        : computeGenerationCost(result.usage)
+    return {
+      query: cleaned.length > 0 ? cleaned : personaSpec,
+      usage: result.usage,
+      modelId: result.response?.modelId ?? DEFAULT_OPENROUTER_MODEL,
+      provider: "openrouter",
+      costUsd,
+      metadata: openrouterUsage ? { openrouterUsage } : null,
+    }
   } catch {
-    return personaSpec
+    return { query: personaSpec }
   }
 }
 
@@ -123,6 +244,37 @@ function normalizeLead(raw: LeadRowRaw): LeadRow | null {
   return {
     ...raw,
     company,
+  }
+}
+
+async function recordAiCall(
+  supabase: ReturnType<typeof createSupabaseServerClient>,
+  payload: {
+    run_id: string
+    provider: string
+    model?: string | null
+    operation: "generate_text" | "rerank"
+    input_tokens?: number | null
+    output_tokens?: number | null
+    total_tokens?: number | null
+    documents_count?: number | null
+    cost_usd?: number | null
+    metadata?: Record<string, unknown> | null
+  }
+) {
+  const { error } = await supabase.from("ai_calls").insert({
+    ...payload,
+    model: payload.model ?? null,
+    input_tokens: payload.input_tokens ?? null,
+    output_tokens: payload.output_tokens ?? null,
+    total_tokens: payload.total_tokens ?? null,
+    documents_count: payload.documents_count ?? null,
+    cost_usd: payload.cost_usd ?? null,
+    metadata: payload.metadata ?? null,
+  })
+
+  if (error) {
+    console.warn("Failed to record AI call:", error.message)
   }
 }
 
@@ -190,7 +342,29 @@ export async function runRanking({
     grouped.set(lead.company.id, list)
   }
 
-  const query = await buildPersonaQuery(personaSpec)
+  const personaQuery = await buildPersonaQuery(personaSpec)
+
+  if (personaQuery.usage || personaQuery.provider) {
+    const usage = personaQuery.usage
+    const inputTokens = usage?.inputTokens ?? null
+    const outputTokens = usage?.outputTokens ?? null
+    const totalTokens = usage?.totalTokens ?? null
+    const costUsd = computeGenerationCost(usage)
+
+    await recordAiCall(supabase, {
+      run_id: run.id,
+      provider: personaQuery.provider ?? "openrouter",
+      model: personaQuery.modelId ?? DEFAULT_OPENROUTER_MODEL,
+      operation: "generate_text",
+      input_tokens: inputTokens,
+      output_tokens: outputTokens,
+      total_tokens: totalTokens,
+      cost_usd: personaQuery.costUsd ?? costUsd,
+      metadata: personaQuery.metadata ?? null,
+    })
+  }
+
+  const query = personaQuery.query
   const allRankingRows: Array<{
     run_id: string
     lead_id: string
@@ -207,10 +381,24 @@ export async function runRanking({
     const documents = companyLeads.map(formatLeadText)
     if (documents.length === 0) continue
 
-    const { ranking } = await rerank({
+    const rerankResult = await rerank({
       model: cohere.reranking(DEFAULT_RERANK_MODEL),
       query,
       documents,
+    })
+    const { ranking } = rerankResult
+
+    await recordAiCall(supabase, {
+      run_id: run.id,
+      provider: "cohere",
+      model: rerankResult.response?.modelId ?? DEFAULT_RERANK_MODEL,
+      operation: "rerank",
+      documents_count: documents.length,
+      cost_usd: computeRerankCost(documents.length),
+      metadata: {
+        companyId,
+        companyName: companyLeads[0]?.company.name ?? null,
+      },
     })
 
     const sorted = [...ranking].sort(

@@ -13,5 +13,15 @@ export function getOpenRouterModel(modelId: string): OpenRouterModel | null {
     cachedOpenRouter = createOpenRouter({ apiKey })
   }
 
-  return cachedOpenRouter.chat(modelId)
+  const includeUsage = process.env.OPENROUTER_USAGE !== "false"
+  return cachedOpenRouter.chat(
+    modelId,
+    includeUsage
+      ? {
+          usage: {
+            include: true,
+          },
+        }
+      : undefined
+  )
 }

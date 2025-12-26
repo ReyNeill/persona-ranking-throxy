@@ -3,7 +3,10 @@
 import * as React from "react"
 
 import { RankingTable } from "@/components/ranking-table"
-import type { RankingResponse } from "@/components/ranking-types"
+import type {
+  RankingResponse,
+  StatsResponse,
+} from "@/components/ranking-types"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -26,6 +29,7 @@ export function RankingClient() {
   const [topN, setTopN] = React.useState(3)
   const [minScore, setMinScore] = React.useState(0.4)
   const [results, setResults] = React.useState<RankingResponse | null>(null)
+  const [stats, setStats] = React.useState<StatsResponse | null>(null)
   const [isRunning, setIsRunning] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
 
@@ -42,6 +46,33 @@ export function RankingClient() {
       isMounted = false
     }
   }, [])
+
+  React.useEffect(() => {
+    let isMounted = true
+
+    const params = results?.runId ? `?runId=${results.runId}` : ""
+    fetch(`/api/stats${params}`)
+      .then((res) => res.json())
+      .then((data: StatsResponse) => {
+        if (isMounted && data?.totals) {
+          setStats(data)
+        }
+      })
+      .catch(() => null)
+
+    return () => {
+      isMounted = false
+    }
+  }, [results?.runId])
+
+  function formatCredits(value: number | null) {
+    if (value === null || Number.isNaN(value)) return "—"
+    return `${value.toFixed(4)} credits`
+  }
+
+  function formatNumber(value: number) {
+    return new Intl.NumberFormat("en-US").format(value)
+  }
 
   async function runRanking() {
     setIsRunning(true)
@@ -142,6 +173,55 @@ export function RankingClient() {
           {error ? <p className="text-destructive text-sm">{error}</p> : null}
         </CardContent>
       </Card>
+
+      {stats ? (
+        <section className="grid gap-4 md:grid-cols-4">
+          <Card>
+            <CardHeader className="space-y-1">
+              <CardDescription>Total cost (credits)</CardDescription>
+              <CardTitle className="text-xl">
+                {formatCredits(stats.totals.totalCost)}
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="text-muted-foreground text-xs">
+              {formatNumber(stats.totals.callCount)} calls
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="space-y-1">
+              <CardDescription>Avg cost / call (credits)</CardDescription>
+              <CardTitle className="text-xl">
+                {formatCredits(stats.totals.avgCost)}
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="text-muted-foreground text-xs">
+              {formatNumber(stats.totals.inputTokens)} input tokens
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="space-y-1">
+              <CardDescription>Output tokens</CardDescription>
+              <CardTitle className="text-xl">
+                {formatNumber(stats.totals.outputTokens)}
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="text-muted-foreground text-xs">
+              {formatNumber(stats.totals.documents)} documents reranked
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="space-y-1">
+              <CardDescription>Last run cost (credits)</CardDescription>
+              <CardTitle className="text-xl">
+                {formatCredits(stats.run?.totalCost ?? null)}
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="text-muted-foreground text-xs">
+              {formatNumber(stats.run?.callCount ?? 0)} calls
+            </CardContent>
+          </Card>
+        </section>
+      ) : null}
 
       <section className="flex flex-col gap-4">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
