@@ -35,6 +35,9 @@ import type { LeadResult } from "@/components/ranking-types"
 
 type RankingTableProps = {
   leads: LeadResult[]
+  paginationMode?: "auto" | "always" | "hidden"
+  paginationSticky?: boolean
+  paginationDocked?: boolean
 }
 
 const scoreSort: SortingFn<LeadResult> = (rowA, rowB) => {
@@ -43,13 +46,18 @@ const scoreSort: SortingFn<LeadResult> = (rowA, rowB) => {
   return a === b ? 0 : a > b ? 1 : -1
 }
 
-export function RankingTable({ leads }: RankingTableProps) {
+export function RankingTable({
+  leads,
+  paginationMode = "auto",
+  paginationSticky = false,
+  paginationDocked = false,
+}: RankingTableProps) {
   const [sorting, setSorting] = React.useState<SortingState>([
     { id: "score", desc: true },
   ])
   const [pagination, setPagination] = React.useState({
     pageIndex: 0,
-    pageSize: 8,
+    pageSize: 9,
   })
 
   const data = React.useMemo(() => leads, [leads])
@@ -76,6 +84,10 @@ export function RankingTable({ leads }: RankingTableProps) {
 
     return items
   }, [data.length, pagination.pageIndex, pagination.pageSize])
+
+  const shouldShowPagination =
+    paginationMode === "always" ||
+    (paginationMode !== "hidden" && data.length > pagination.pageSize)
 
   const columns = React.useMemo<ColumnDef<LeadResult>[]>(
     () => [
@@ -181,7 +193,11 @@ export function RankingTable({ leads }: RankingTableProps) {
   })
 
   return (
-    <div className="space-y-4">
+    <div
+      className={
+        paginationDocked ? "flex h-full flex-col gap-4" : "space-y-4"
+      }
+    >
       <div className="overflow-hidden rounded-2xl border">
       <Table>
         <TableHeader>
@@ -224,8 +240,18 @@ export function RankingTable({ leads }: RankingTableProps) {
         </TableBody>
       </Table>
       </div>
-      {data.length > pagination.pageSize ? (
-        <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
+      {shouldShowPagination ? (
+        <div
+          className={[
+            "flex flex-wrap items-center justify-between gap-3 text-sm",
+            paginationDocked ? "mt-auto" : null,
+            paginationSticky
+              ? "sticky bottom-0 bg-card/95 backdrop-blur border-t border-border px-3 py-2"
+              : null,
+          ]
+            .filter(Boolean)
+            .join(" ")}
+        >
           <span className="text-muted-foreground">
             Showing{" "}
             {data.length === 0

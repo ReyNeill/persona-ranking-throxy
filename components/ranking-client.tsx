@@ -16,11 +16,35 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Progress } from "@/components/ui/progress"
 import { Skeleton } from "@/components/ui/skeleton"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
 import { Textarea } from "@/components/ui/textarea"
+import {
+  Pagination,
+  PaginationContent,
+  PaginationEllipsis,
+  PaginationItem,
+  PaginationLink,
+  PaginationNext,
+  PaginationPrevious,
+} from "@/components/ui/pagination"
 import { toast } from "sonner"
 
 const DEFAULT_PERSONA_SPEC = `We sell a sales engagement platform.
@@ -69,6 +93,10 @@ export function RankingClient() {
     pageIndex: 0,
     pageSize: 4,
   })
+  const [selectedCompany, setSelectedCompany] = React.useState<
+    RankingResponse["companies"][number] | null
+  >(null)
+  const [isCompanyDialogOpen, setIsCompanyDialogOpen] = React.useState(false)
   const [progress, setProgress] = React.useState<{
     status: ProgressStatus
     percent: number
@@ -126,6 +154,16 @@ export function RankingClient() {
   React.useEffect(() => {
     setCompanyPagination((prev) => ({ ...prev, pageIndex: 0 }))
   }, [results?.runId])
+
+  React.useEffect(() => {
+    if (!selectedCompany?.companyId) return
+    const updated = results?.companies?.find(
+      (company) => company.companyId === selectedCompany.companyId
+    )
+    if (updated && updated !== selectedCompany) {
+      setSelectedCompany(updated)
+    }
+  }, [results?.companies, selectedCompany?.companyId])
 
   function formatCredits(value: number | null) {
     if (value === null || Number.isNaN(value)) return "—"
@@ -207,6 +245,18 @@ export function RankingClient() {
   const companies = React.useMemo(() => {
     const list = results?.companies ?? []
     return [...list].sort((a, b) => {
+      const aSelected = a.leads.filter((lead) => lead.selected).length
+      const bSelected = b.leads.filter((lead) => lead.selected).length
+      if (aSelected !== bSelected) return bSelected - aSelected
+      const aTopScore = Math.max(
+        ...a.leads.map((lead) => lead.score ?? -1),
+        -1
+      )
+      const bTopScore = Math.max(
+        ...b.leads.map((lead) => lead.score ?? -1),
+        -1
+      )
+      if (aTopScore !== bTopScore) return bTopScore - aTopScore
       const nameSort = a.companyName.localeCompare(b.companyName)
       if (nameSort !== 0) return nameSort
       return a.companyId.localeCompare(b.companyId)
@@ -258,6 +308,8 @@ export function RankingClient() {
     setStats(null)
     setError(null)
     setResults(null)
+    setSelectedCompany(null)
+    setIsCompanyDialogOpen(false)
     setProgress({
       status: "running",
       percent: 0,
@@ -703,27 +755,204 @@ export function RankingClient() {
             </CardContent>
           </Card>
         ) : (
-          <div className="flex flex-col gap-6">
-            {results.companies.map((company) => (
-              <Card key={company.companyId} className="ring-primary/10">
-                <CardHeader className="flex flex-row items-center justify-between gap-4">
-                  <div>
-                    <CardTitle className="text-lg">
-                      {company.companyName}
-                    </CardTitle>
-                  </div>
-                  <span className="text-muted-foreground text-xs">
-                    {company.leads.filter((lead) => lead.selected).length} selected
+          <Card className="ring-primary/10">
+            <CardHeader>
+              <CardTitle>Companies</CardTitle>
+              <CardDescription>
+                View top contacts per company in a focused detail panel.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="overflow-hidden rounded-2xl border">
+                <Table className="table-fixed">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-[45%]">Company</TableHead>
+                      <TableHead className="w-[12%] text-right">
+                        Selected
+                      </TableHead>
+                      <TableHead className="w-[10%] text-right">
+                        Leads
+                      </TableHead>
+                      <TableHead className="w-[13%] text-right">
+                        Top score
+                      </TableHead>
+                      <TableHead className="w-[20%] text-right">
+                        Actions
+                      </TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {pagedCompanies.length ? (
+                      pagedCompanies.map((company) => {
+                        const selectedCount = company.leads.filter(
+                          (lead) => lead.selected
+                        ).length
+                        const topScore = Math.max(
+                          ...company.leads.map(
+                            (lead) => lead.score ?? -1
+                          ),
+                          -1
+                        )
+                        return (
+                          <TableRow key={company.companyId}>
+                            <TableCell className="font-medium">
+                              <span className="block truncate">
+                                {company.companyName}
+                              </span>
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {selectedCount}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {company.leads.length}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {topScore >= 0 ? topScore.toFixed(2) : "—"}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => {
+                                  setSelectedCompany(company)
+                                  setIsCompanyDialogOpen(true)
+                                }}
+                              >
+                                View
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        )
+                      })
+                    ) : (
+                      <TableRow>
+                        <TableCell colSpan={5} className="h-24 text-center">
+                          No companies yet.
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+
+              {companies.length > companyPagination.pageSize ? (
+                <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
+                  <span className="text-muted-foreground">
+                    Showing{" "}
+                    {companies.length === 0
+                      ? 0
+                      : companyPageIndex * companyPagination.pageSize + 1}
+                    –
+                    {Math.min(
+                      companies.length,
+                      (companyPageIndex + 1) * companyPagination.pageSize
+                    )}{" "}
+                    of {companies.length} companies
                   </span>
-                </CardHeader>
-                <CardContent>
-                  <RankingTable leads={company.leads} />
-                </CardContent>
-              </Card>
-            ))}
-          </div>
+                  <Pagination className="mx-0 w-auto justify-end">
+                    <PaginationContent>
+                      <PaginationItem>
+                        <PaginationPrevious
+                          href="#"
+                          onClick={(event) => {
+                            event.preventDefault()
+                            if (companyPageIndex === 0) return
+                            setCompanyPagination((prev) => ({
+                              ...prev,
+                              pageIndex: Math.max(0, prev.pageIndex - 1),
+                            }))
+                          }}
+                          className={
+                            companyPageIndex === 0
+                              ? "pointer-events-none opacity-50"
+                              : undefined
+                          }
+                        />
+                      </PaginationItem>
+                      {companyPageItems.map((item, index) =>
+                        item === "ellipsis" ? (
+                          <PaginationItem key={`company-ellipsis-${index}`}>
+                            <PaginationEllipsis />
+                          </PaginationItem>
+                        ) : (
+                          <PaginationItem key={`company-page-${item}`}>
+                            <PaginationLink
+                              href="#"
+                              isActive={item === companyPageIndex}
+                              onClick={(event) => {
+                                event.preventDefault()
+                                setCompanyPagination((prev) => ({
+                                  ...prev,
+                                  pageIndex: item,
+                                }))
+                              }}
+                            >
+                              {item + 1}
+                            </PaginationLink>
+                          </PaginationItem>
+                        )
+                      )}
+                      <PaginationItem>
+                        <PaginationNext
+                          href="#"
+                          onClick={(event) => {
+                            event.preventDefault()
+                            if (companyPageIndex >= companyPageCount - 1) return
+                            setCompanyPagination((prev) => ({
+                              ...prev,
+                              pageIndex: Math.min(
+                                companyPageCount - 1,
+                                prev.pageIndex + 1
+                              ),
+                            }))
+                          }}
+                          className={
+                            companyPageIndex >= companyPageCount - 1
+                              ? "pointer-events-none opacity-50"
+                              : undefined
+                          }
+                        />
+                      </PaginationItem>
+                    </PaginationContent>
+                  </Pagination>
+                </div>
+              ) : null}
+            </CardContent>
+          </Card>
         )}
       </section>
+      <Dialog
+        open={isCompanyDialogOpen}
+        onOpenChange={(open) => {
+          setIsCompanyDialogOpen(open)
+          if (!open) {
+            setSelectedCompany(null)
+          }
+        }}
+      >
+        <DialogContent className="bg-card text-card-foreground max-w-[calc(100%-2rem)] w-[95vw] h-[85vh] overflow-hidden text-sm sm:max-w-6xl sm:w-[95vw]">
+          {selectedCompany ? (
+            <div className="flex h-full flex-col gap-4">
+              <DialogHeader>
+                <DialogTitle>{selectedCompany.companyName}</DialogTitle>
+                <DialogDescription>
+                  {selectedCompany.leads.filter((lead) => lead.selected).length}{" "}
+                  selected out of {selectedCompany.leads.length} leads.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+                <RankingTable
+                  leads={selectedCompany.leads}
+                  paginationMode="always"
+                  paginationSticky
+                  paginationDocked
+                />
+              </div>
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
