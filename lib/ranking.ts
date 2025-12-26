@@ -59,6 +59,10 @@ type RankingRunInput = {
   ingestionId?: string | null
 }
 
+type RankingRunOptions = {
+  onProgress?: (event: RankingProgressEvent) => void | Promise<void>
+}
+
 type RankedLead = {
   leadId: string
   fullName: string | null
@@ -77,6 +81,38 @@ type CompanyResults = {
   companyName: string
   leads: RankedLead[]
 }
+
+export type RankingProgressEvent =
+  | {
+      type: "start"
+      runId: string
+      totalCompanies: number
+    }
+  | {
+      type: "persona_ready"
+      runId: string
+    }
+  | {
+      type: "company_start"
+      runId: string
+      companyId: string
+      companyName: string
+      index: number
+      total: number
+    }
+  | {
+      type: "company_result"
+      runId: string
+      company: CompanyResults
+      completed: number
+      total: number
+    }
+  | {
+      type: "complete"
+      runId: string
+      completed: number
+      total: number
+    }
 
 type PersonaQueryResult = {
   query: string
@@ -286,8 +322,14 @@ export async function runRanking({
   topN,
   minScore,
   ingestionId,
-}: RankingRunInput) {
+}: RankingRunInput, options?: RankingRunOptions) {
   const supabase = createSupabaseServerClient()
+  const notifyProgress = options?.onProgress
+  const emit = async (event: RankingProgressEvent) => {
+    if (notifyProgress) {
+      await notifyProgress(event)
+    }
+  }
 
   const { data: persona, error: personaError } = await supabase
     .from("personas")
@@ -346,6 +388,10 @@ export async function runRanking({
   }
 
   const personaQuery = await buildPersonaQuery(personaSpec)
+  await emit({ type: "persona_ready", runId: run.id })
+
+  const totalCompanies = grouped.size
+  await emit({ type: "start", runId: run.id, totalCompanies })
 
   if (personaQuery.usage || personaQuery.provider) {
     const usage = personaQuery.usage
@@ -379,8 +425,18 @@ export async function runRanking({
     reason: string
   }> = []
   const companyResults: CompanyResults[] = []
+  let completedCompanies = 0
 
   for (const [companyId, companyLeads] of grouped.entries()) {
+    const companyName = companyLeads[0]?.company.name ?? "Unknown"
+    await emit({
+      type: "company_start",
+      runId: run.id,
+      companyId,
+      companyName,
+      index: completedCompanies + 1,
+      total: totalCompanies,
+    })
     const documents = companyLeads.map(formatLeadText)
     if (documents.length === 0) continue
 
@@ -453,8 +509,21 @@ export async function runRanking({
 
     companyResults.push({
       companyId,
-      companyName: companyLeads[0]?.company.name ?? "Unknown",
+      companyName,
       leads: rankedLeads,
+    })
+
+    completedCompanies += 1
+    await emit({
+      type: "company_result",
+      runId: run.id,
+      company: {
+        companyId,
+        companyName,
+        leads: rankedLeads,
+      },
+      completed: completedCompanies,
+      total: totalCompanies,
     })
   }
 
@@ -468,7 +537,16 @@ export async function runRanking({
     }
   }
 
-  await supabase.from("ranking_runs").update({ status: "completed" }).eq("id", run.id)
+  await supabase
+    .from("ranking_runs")
+    .update({ status: "completed" })
+    .eq("id", run.id)
+  await emit({
+    type: "complete",
+    runId: run.id,
+    completed: completedCompanies,
+    total: totalCompanies,
+  })
 
   return {
     runId: run.id,

@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Progress } from "@/components/ui/progress"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/ui/textarea"
 import { toast } from "sonner"
@@ -26,6 +27,29 @@ const DEFAULT_PERSONA_SPEC = `We sell a sales engagement platform.
 Target: revenue leaders (VP Sales, Head of Sales, Sales Ops, RevOps).
 Avoid: HR, Recruiting, IT, Finance, Legal, or non-revenue roles.
 Prefer mid-market to enterprise companies and decision-makers.`
+
+type ProgressStatus = "idle" | "running" | "completed" | "error"
+
+type RankingStreamEvent =
+  | { type: "start"; runId: string; totalCompanies: number }
+  | { type: "persona_ready"; runId: string }
+  | {
+      type: "company_start"
+      runId: string
+      companyId: string
+      companyName: string
+      index: number
+      total: number
+    }
+  | {
+      type: "company_result"
+      runId: string
+      company: RankingResponse["companies"][number]
+      completed: number
+      total: number
+    }
+  | { type: "complete"; runId: string; completed: number; total: number }
+  | { type: "error"; message: string }
 
 export function RankingClient() {
   const [personaSpec, setPersonaSpec] = React.useState(DEFAULT_PERSONA_SPEC)
@@ -40,6 +64,20 @@ export function RankingClient() {
   const [isLoadingResults, setIsLoadingResults] = React.useState(true)
   const [isLoadingStats, setIsLoadingStats] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
+  const [statsVersion, setStatsVersion] = React.useState(0)
+  const [progress, setProgress] = React.useState<{
+    status: ProgressStatus
+    percent: number
+    total: number
+    completed: number
+    message: string
+  }>({
+    status: "idle",
+    percent: 0,
+    total: 0,
+    completed: 0,
+    message: "",
+  })
 
   React.useEffect(() => {
     let isMounted = true
@@ -79,7 +117,7 @@ export function RankingClient() {
     return () => {
       isMounted = false
     }
-  }, [results?.runId])
+  }, [results?.runId, statsVersion])
 
   function formatCredits(value: number | null) {
     if (value === null || Number.isNaN(value)) return "—"
@@ -163,9 +201,18 @@ export function RankingClient() {
     setIsLoadingResults(true)
     setStats(null)
     setError(null)
+    setResults(null)
+    setProgress({
+      status: "running",
+      percent: 0,
+      total: 0,
+      completed: 0,
+      message: "Preparing ranking...",
+    })
 
     try {
       let ingestionId: string | null = null
+      const trimmedSpec = personaSpec.trim()
 
       if (csvFile) {
         setIsUploading(true)
@@ -186,38 +233,168 @@ export function RankingClient() {
           description: `Loaded ${ingestData.leadCount} leads from ${csvFile.name} (${ingestData.companyCount} companies, ${ingestData.skippedCount} skipped).`,
         })
         setCsvFile(null)
+        setIsUploading(false)
       }
 
-      const response = await fetch("/api/rank", {
+      const response = await fetch("/api/rank/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          personaSpec,
+          personaSpec: trimmedSpec,
           topN,
           minScore,
           ingestionId,
         }),
       })
 
-      const data = await response.json()
       if (!response.ok) {
-        throw new Error(data.error ?? "Failed to run ranking")
+        const data = await response.json().catch(() => null)
+        throw new Error(data?.error ?? "Failed to run ranking")
       }
 
-      setResults(data)
-      toast.success("Ranking complete", {
-        description: "Results updated with the latest ranking run.",
-      })
+      if (!response.body) {
+        throw new Error("Streaming response unavailable")
+      }
+
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ""
+
+      const handleEvent = (event: RankingStreamEvent) => {
+        if (event.type === "start") {
+          setResults({
+            runId: event.runId,
+            topN,
+            minScore,
+            personaSpec: trimmedSpec,
+            companies: [],
+          })
+          setProgress((prev) => ({
+            ...prev,
+            status: "running",
+            percent: 0,
+            total: event.totalCompanies,
+            completed: 0,
+            message:
+              event.totalCompanies > 0
+                ? `Ranking ${event.totalCompanies} companies...`
+                : "Preparing ranking...",
+          }))
+          return
+        }
+
+        if (event.type === "persona_ready") {
+          setProgress((prev) => ({
+            ...prev,
+            message: "Persona query ready. Starting ranking...",
+          }))
+          return
+        }
+
+        if (event.type === "company_start") {
+          setProgress((prev) => ({
+            ...prev,
+            message: `Ranking ${event.companyName} (${event.index}/${event.total})`,
+          }))
+          return
+        }
+
+        if (event.type === "company_result") {
+          const percent =
+            event.total > 0
+              ? Math.round((event.completed / event.total) * 100)
+              : 0
+          setResults((prev) => {
+            const existing = prev?.companies ?? []
+            const filtered = existing.filter(
+              (company) => company.companyId !== event.company.companyId
+            )
+            return {
+              runId: prev?.runId ?? event.runId,
+              topN: prev?.topN ?? topN,
+              minScore: prev?.minScore ?? minScore,
+              personaSpec: prev?.personaSpec ?? trimmedSpec,
+              companies: [...filtered, event.company],
+            }
+          })
+          setIsLoadingResults(false)
+          setProgress((prev) => ({
+            ...prev,
+            percent,
+            total: event.total,
+            completed: event.completed,
+            message: `Ranked ${event.company.companyName}`,
+          }))
+          return
+        }
+
+        if (event.type === "complete") {
+          setProgress((prev) => ({
+            ...prev,
+            status: "completed",
+            percent: 100,
+            total: event.total,
+            completed: event.completed,
+            message: "Ranking complete.",
+          }))
+          setStatsVersion((version) => version + 1)
+          toast.success("Ranking complete", {
+            description: "Results updated with the latest ranking run.",
+          })
+          return
+        }
+
+        if (event.type === "error") {
+          setProgress((prev) => ({
+            ...prev,
+            status: "error",
+            message: event.message,
+          }))
+          setError(event.message)
+          toast.error("Ranking failed", {
+            description: event.message,
+          })
+        }
+      }
+
+      while (true) {
+        const { value, done } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        let boundaryIndex = buffer.indexOf("\n\n")
+        while (boundaryIndex !== -1) {
+          const chunk = buffer.slice(0, boundaryIndex)
+          buffer = buffer.slice(boundaryIndex + 2)
+          const dataLine = chunk
+            .split("\n")
+            .find((line) => line.startsWith("data: "))
+          if (dataLine) {
+            const json = dataLine.replace(/^data:\s*/, "")
+            try {
+              const event = JSON.parse(json) as RankingStreamEvent
+              handleEvent(event)
+            } catch {
+              // Ignore malformed events.
+            }
+          }
+          boundaryIndex = buffer.indexOf("\n\n")
+        }
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error"
       setError(message)
       toast.error("Ranking failed", {
         description: message,
       })
+      setProgress((prev) => ({
+        ...prev,
+        status: "error",
+        message,
+      }))
     } finally {
       setIsRunning(false)
-      setIsLoadingResults(false)
       setIsUploading(false)
+      setIsLoadingResults(false)
     }
   }
 
@@ -334,6 +511,27 @@ export function RankingClient() {
             </div>
           </div>
 
+          {progress.status !== "idle" ? (
+            <div className="border-border bg-muted/40 grid gap-3 rounded-none border p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                <span className="font-medium">Ranking progress</span>
+                {progress.total > 0 ? (
+                  <span className="text-muted-foreground">
+                    {progress.completed}/{progress.total} companies
+                  </span>
+                ) : (
+                  <span className="text-muted-foreground">Preparing…</span>
+                )}
+              </div>
+              <Progress value={progress.percent} />
+              {progress.message ? (
+                <p className="text-muted-foreground text-xs">
+                  {progress.message}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+
           {error ? <p className="text-destructive text-sm">{error}</p> : null}
         </CardContent>
       </Card>
@@ -405,6 +603,11 @@ export function RankingClient() {
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-xl font-semibold">Results</h2>
           <div className="flex flex-wrap items-center gap-3">
+            {progress.status === "running" ? (
+              <span className="text-muted-foreground text-xs">
+                Live updates…
+              </span>
+            ) : null}
             {results?.runId ? (
               <p className="text-muted-foreground text-xs">
                 Run ID: {results.runId}
