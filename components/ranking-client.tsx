@@ -3,6 +3,7 @@
 import * as React from "react"
 
 import { RankingTable } from "@/components/ranking-table"
+import { AnimatedThemeToggler } from "@/components/ui/animated-theme-toggler"
 import type {
   RankingResponse,
   StatsResponse,
@@ -17,6 +18,7 @@ import {
 } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Skeleton } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/ui/textarea"
 
 const DEFAULT_PERSONA_SPEC = `We sell a sales engagement platform.
@@ -31,16 +33,22 @@ export function RankingClient() {
   const [results, setResults] = React.useState<RankingResponse | null>(null)
   const [stats, setStats] = React.useState<StatsResponse | null>(null)
   const [isRunning, setIsRunning] = React.useState(false)
+  const [isLoadingResults, setIsLoadingResults] = React.useState(true)
+  const [isLoadingStats, setIsLoadingStats] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
 
   React.useEffect(() => {
     let isMounted = true
+    setIsLoadingResults(true)
     fetch("/api/results")
       .then((res) => res.json())
       .then((data: RankingResponse) => {
         if (isMounted) setResults(data)
       })
       .catch(() => null)
+      .finally(() => {
+        if (isMounted) setIsLoadingResults(false)
+      })
 
     return () => {
       isMounted = false
@@ -51,6 +59,7 @@ export function RankingClient() {
     let isMounted = true
 
     const params = results?.runId ? `?runId=${results.runId}` : ""
+    setIsLoadingStats(true)
     fetch(`/api/stats${params}`)
       .then((res) => res.json())
       .then((data: StatsResponse) => {
@@ -59,6 +68,9 @@ export function RankingClient() {
         }
       })
       .catch(() => null)
+      .finally(() => {
+        if (isMounted) setIsLoadingStats(false)
+      })
 
     return () => {
       isMounted = false
@@ -140,6 +152,8 @@ export function RankingClient() {
 
   async function runRanking() {
     setIsRunning(true)
+    setIsLoadingResults(true)
+    setStats(null)
     setError(null)
 
     try {
@@ -163,25 +177,31 @@ export function RankingClient() {
       setError(err instanceof Error ? err.message : "Unknown error")
     } finally {
       setIsRunning(false)
+      setIsLoadingResults(false)
     }
   }
 
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-col gap-8 px-6 py-12">
       <section className="flex flex-col gap-3">
-        <p className="text-muted-foreground text-sm uppercase tracking-[0.3em]">
-          Persona Ranking System
-        </p>
-        <h1 className="text-3xl font-semibold tracking-tight">
-          Rank leads per company with AI
-        </h1>
-        <p className="text-muted-foreground text-base">
-          Provide the persona spec, run ranking, and surface only the most
-          relevant contacts.
-        </p>
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-2">
+            <p className="text-primary/70 text-sm uppercase tracking-[0.3em]">
+              Persona Ranking System
+            </p>
+            <h1 className="text-3xl font-semibold tracking-tight">
+              Rank leads per company with AI
+            </h1>
+            <p className="text-muted-foreground text-base">
+              Provide the persona spec, run ranking, and surface only the most
+              relevant contacts.
+            </p>
+          </div>
+          <AnimatedThemeToggler className="border-border bg-background text-foreground hover:bg-muted flex size-9 items-center justify-center rounded-full border" />
+        </div>
       </section>
 
-      <Card>
+      <Card className="ring-primary/10">
         <CardHeader>
           <CardTitle>Ranking Controls</CardTitle>
           <CardDescription>
@@ -238,9 +258,23 @@ export function RankingClient() {
         </CardContent>
       </Card>
 
-      {stats ? (
+      {isLoadingStats ? (
         <section className="grid gap-4 md:grid-cols-4">
-          <Card>
+          {Array.from({ length: 4 }).map((_, index) => (
+            <Card key={`stats-skeleton-${index}`} className="ring-primary/10">
+              <CardHeader className="space-y-2">
+                <Skeleton className="h-3 w-24" />
+                <Skeleton className="h-6 w-20" />
+              </CardHeader>
+              <CardContent>
+                <Skeleton className="h-3 w-28" />
+              </CardContent>
+            </Card>
+          ))}
+        </section>
+      ) : stats ? (
+        <section className="grid gap-4 md:grid-cols-4">
+          <Card className="ring-primary/10">
             <CardHeader className="space-y-1">
               <CardDescription>Total cost (credits)</CardDescription>
               <CardTitle className="text-xl">
@@ -251,7 +285,7 @@ export function RankingClient() {
               {formatNumber(stats.totals.callCount)} calls
             </CardContent>
           </Card>
-          <Card>
+          <Card className="ring-primary/10">
             <CardHeader className="space-y-1">
               <CardDescription>Avg cost / call (credits)</CardDescription>
               <CardTitle className="text-xl">
@@ -262,7 +296,7 @@ export function RankingClient() {
               {formatNumber(stats.totals.inputTokens)} input tokens
             </CardContent>
           </Card>
-          <Card>
+          <Card className="ring-primary/10">
             <CardHeader className="space-y-1">
               <CardDescription>Output tokens</CardDescription>
               <CardTitle className="text-xl">
@@ -273,7 +307,7 @@ export function RankingClient() {
               {formatNumber(stats.totals.documents)} documents reranked
             </CardContent>
           </Card>
-          <Card>
+          <Card className="ring-primary/10">
             <CardHeader className="space-y-1">
               <CardDescription>Last run cost (credits)</CardDescription>
               <CardTitle className="text-xl">
@@ -297,7 +331,7 @@ export function RankingClient() {
               </p>
             ) : null}
             <Button
-              variant="outline"
+              variant="default"
               size="sm"
               onClick={exportSelectedToCsv}
               disabled={selectedCount === 0}
@@ -307,7 +341,23 @@ export function RankingClient() {
           </div>
         </div>
 
-        {!results?.companies?.length ? (
+        {isLoadingResults ? (
+          <div className="flex flex-col gap-6">
+            {Array.from({ length: 2 }).map((_, index) => (
+              <Card key={`results-skeleton-${index}`} className="ring-primary/10">
+                <CardHeader className="space-y-2">
+                  <Skeleton className="h-4 w-40" />
+                  <Skeleton className="h-3 w-24" />
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <Skeleton className="h-8 w-full" />
+                  <Skeleton className="h-8 w-full" />
+                  <Skeleton className="h-8 w-full" />
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        ) : !results?.companies?.length ? (
           <Card>
             <CardContent className="text-muted-foreground py-6 text-sm">
               No rankings yet. Load a CSV and run the ranking to see results.
@@ -316,7 +366,7 @@ export function RankingClient() {
         ) : (
           <div className="flex flex-col gap-6">
             {results.companies.map((company) => (
-              <Card key={company.companyId}>
+              <Card key={company.companyId} className="ring-primary/10">
                 <CardHeader className="flex flex-row items-center justify-between gap-4">
                   <div>
                     <CardTitle className="text-lg">

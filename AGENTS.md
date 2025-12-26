@@ -27,6 +27,7 @@
 ## Agent-Specific Instructions
 - For UI work, always use the shadcn MCP tools to source components and examples before implementation.
 - AI SDK DevTools can be enabled locally with `AI_DEVTOOLS=true` and `bunx @ai-sdk/devtools` (never in production).
+- Prefer adding shadcn/magicui components via their CLI or MCP registry rather than hand-copying files.
 
 ## Testing Guidelines
 - No test framework configured yet.
