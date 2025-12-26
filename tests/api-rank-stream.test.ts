@@ -5,6 +5,15 @@ import { handleRankStreamRequest } from "../app/api/rank/stream/route"
 let runRankingImpl: ((input: any, options?: any) => Promise<any>) | null = null
 let lastRunRankingInput: any = null
 
+const baseRankingResult = {
+  runId: "ignored",
+  createdAt: "2025-12-26T00:00:00Z",
+  topN: 1,
+  minScore: 0,
+  personaSpec: null,
+  companies: [],
+}
+
 beforeEach(() => {
   runRankingImpl = null
   lastRunRankingInput = null
@@ -19,7 +28,7 @@ describe("/api/rank/stream", () => {
     })
 
     const response = await handleRankStreamRequest(request, {
-      runRanking: async () => ({ runId: "ignored" }),
+      runRanking: async () => ({ ...baseRankingResult }),
     })
 
     expect(response.status).toBe(400)
@@ -33,7 +42,7 @@ describe("/api/rank/stream", () => {
       lastRunRankingInput = input
       await options?.onProgress?.({ type: "start", runId: "run-1", totalCompanies: 2 })
       await options?.onProgress?.({ type: "complete", runId: "run-1", completed: 2, total: 2 })
-      return { runId: "run-1" }
+      return { ...baseRankingResult, runId: "run-1" }
     }
 
     const request = new Request("http://localhost/api/rank/stream", {

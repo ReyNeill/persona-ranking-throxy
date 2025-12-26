@@ -12,7 +12,7 @@ type SupabaseStub = {
 }
 
 function createSupabaseStub(): SupabaseStub {
-  const calls = {
+  const calls: SupabaseStub["calls"] = {
     ingestions: [],
     companyUpserts: [],
     leadInserts: [],

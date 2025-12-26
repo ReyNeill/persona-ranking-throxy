@@ -72,7 +72,7 @@ function createSupabaseStub({
   leads: Lead[]
   prompt: string | null
 }): SupabaseRankingStub {
-  const calls = {
+  const calls: SupabaseRankingStub["calls"] = {
     personas: [],
     rankingRuns: [],
     aiCalls: [],

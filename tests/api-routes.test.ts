@@ -7,6 +7,15 @@ let runRankingImpl: ((input: any) => Promise<any>) | null = null
 let getRankingResultsImpl: ((runId?: string | null) => Promise<any>) | null = null
 let lastRunRankingInput: any = null
 
+const baseRankingResult = {
+  runId: "ignored",
+  createdAt: "2025-12-26T00:00:00Z",
+  topN: 1,
+  minScore: 0,
+  personaSpec: null,
+  companies: [],
+}
+
 beforeEach(() => {
   runRankingImpl = null
   getRankingResultsImpl = null
@@ -22,7 +31,7 @@ describe("/api/rank", () => {
     })
 
     const response = await handleRankRequest(request, {
-      runRanking: async () => ({ runId: "ignored", companies: [] }),
+      runRanking: async () => ({ ...baseRankingResult }),
     })
     expect(response.status).toBe(400)
     await expect(response.json()).resolves.toEqual({
@@ -38,7 +47,7 @@ describe("/api/rank", () => {
     })
 
     const response = await handleRankRequest(request, {
-      runRanking: async () => ({ runId: "ignored", companies: [] }),
+      runRanking: async () => ({ ...baseRankingResult }),
     })
     expect(response.status).toBe(400)
     await expect(response.json()).resolves.toEqual({
@@ -47,7 +56,7 @@ describe("/api/rank", () => {
   })
 
   it("runs ranking with clamped values", async () => {
-    runRankingImpl = async () => ({ runId: "run-1", companies: [] })
+    runRankingImpl = async () => ({ ...baseRankingResult, runId: "run-1" })
 
     const request = new Request("http://localhost/api/rank", {
       method: "POST",

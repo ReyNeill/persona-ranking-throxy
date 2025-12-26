@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import Image from "next/image"
 
 import { RankingTable } from "@/components/ranking-table"
 import { AnimatedThemeToggler } from "@/components/ui/animated-theme-toggler"
@@ -546,9 +547,19 @@ export function RankingClient() {
       <section className="flex flex-col gap-3">
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-2">
-            <p className="text-primary/70 text-sm uppercase tracking-[0.3em]">
-              Persona Ranking System
-            </p>
+            <div className="flex items-center gap-3">
+              <Image
+                src="/throxy-logo.avif"
+                alt="PRS logo"
+                width={64}
+                height={28}
+                className="h-7 w-auto"
+                priority
+              />
+              <p className="text-primary/70 text-sm uppercase tracking-[0.3em]">
+                PRS
+              </p>
+            </div>
             <h1 className="text-3xl font-semibold tracking-tight">
               Rank leads per company with AI
             </h1>
