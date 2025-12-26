@@ -4,6 +4,7 @@ import * as React from "react"
 import {
   flexRender,
   getCoreRowModel,
+  getPaginationRowModel,
   getSortedRowModel,
   useReactTable,
   type ColumnDef,
@@ -13,6 +14,15 @@ import {
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import {
+  Pagination,
+  PaginationContent,
+  PaginationEllipsis,
+  PaginationItem,
+  PaginationLink,
+  PaginationNext,
+  PaginationPrevious,
+} from "@/components/ui/pagination"
 import {
   Table,
   TableBody,
@@ -37,8 +47,35 @@ export function RankingTable({ leads }: RankingTableProps) {
   const [sorting, setSorting] = React.useState<SortingState>([
     { id: "score", desc: true },
   ])
+  const [pagination, setPagination] = React.useState({
+    pageIndex: 0,
+    pageSize: 8,
+  })
 
   const data = React.useMemo(() => leads, [leads])
+
+  React.useEffect(() => {
+    setPagination((prev) => ({ ...prev, pageIndex: 0 }))
+  }, [data.length])
+
+  const pageItems = React.useMemo(() => {
+    const pageCount = Math.max(1, Math.ceil(data.length / pagination.pageSize))
+    const current = pagination.pageIndex
+    if (pageCount <= 7) {
+      return Array.from({ length: pageCount }, (_, index) => index)
+    }
+
+    const items: Array<number | "ellipsis"> = [0]
+    const start = Math.max(1, current - 1)
+    const end = Math.min(pageCount - 2, current + 1)
+
+    if (start > 1) items.push("ellipsis")
+    for (let i = start; i <= end; i += 1) items.push(i)
+    if (end < pageCount - 2) items.push("ellipsis")
+    items.push(pageCount - 1)
+
+    return items
+  }, [data.length, pagination.pageIndex, pagination.pageSize])
 
   const columns = React.useMemo<ColumnDef<LeadResult>[]>(
     () => [
@@ -135,14 +172,17 @@ export function RankingTable({ leads }: RankingTableProps) {
   const table = useReactTable({
     data,
     columns,
-    state: { sorting },
+    state: { sorting, pagination },
     onSortingChange: setSorting,
+    onPaginationChange: setPagination,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
+    getPaginationRowModel: getPaginationRowModel(),
   })
 
   return (
-    <div className="overflow-hidden rounded-2xl border">
+    <div className="space-y-4">
+      <div className="overflow-hidden rounded-2xl border">
       <Table>
         <TableHeader>
           {table.getHeaderGroups().map((headerGroup) => (
@@ -183,6 +223,77 @@ export function RankingTable({ leads }: RankingTableProps) {
           )}
         </TableBody>
       </Table>
+      </div>
+      {data.length > pagination.pageSize ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
+          <span className="text-muted-foreground">
+            Showing{" "}
+            {data.length === 0
+              ? 0
+              : pagination.pageIndex * pagination.pageSize + 1}
+            –
+            {Math.min(
+              data.length,
+              (pagination.pageIndex + 1) * pagination.pageSize
+            )}{" "}
+            of {data.length}
+          </span>
+          <Pagination className="mx-0 w-auto justify-end">
+            <PaginationContent>
+              <PaginationItem>
+                <PaginationPrevious
+                  href="#"
+                  onClick={(event) => {
+                    event.preventDefault()
+                    if (!table.getCanPreviousPage()) return
+                    table.previousPage()
+                  }}
+                  className={
+                    table.getCanPreviousPage()
+                      ? undefined
+                      : "pointer-events-none opacity-50"
+                  }
+                />
+              </PaginationItem>
+              {pageItems.map((item, index) =>
+                item === "ellipsis" ? (
+                  <PaginationItem key={`ellipsis-${index}`}>
+                    <PaginationEllipsis />
+                  </PaginationItem>
+                ) : (
+                  <PaginationItem key={`page-${item}`}>
+                    <PaginationLink
+                      href="#"
+                      isActive={item === pagination.pageIndex}
+                      onClick={(event) => {
+                        event.preventDefault()
+                        table.setPageIndex(item)
+                      }}
+                    >
+                      {item + 1}
+                    </PaginationLink>
+                  </PaginationItem>
+                )
+              )}
+              <PaginationItem>
+                <PaginationNext
+                  href="#"
+                  onClick={(event) => {
+                    event.preventDefault()
+                    if (!table.getCanNextPage()) return
+                    table.nextPage()
+                  }}
+                  className={
+                    table.getCanNextPage()
+                      ? undefined
+                      : "pointer-events-none opacity-50"
+                  }
+                />
+              </PaginationItem>
+            </PaginationContent>
+          </Pagination>
+        </div>
+      ) : null}
     </div>
   )
 }

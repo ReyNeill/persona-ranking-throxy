@@ -65,6 +65,10 @@ export function RankingClient() {
   const [isLoadingStats, setIsLoadingStats] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
   const [statsVersion, setStatsVersion] = React.useState(0)
+  const [companyPagination, setCompanyPagination] = React.useState({
+    pageIndex: 0,
+    pageSize: 4,
+  })
   const [progress, setProgress] = React.useState<{
     status: ProgressStatus
     percent: number
@@ -118,6 +122,10 @@ export function RankingClient() {
       isMounted = false
     }
   }, [results?.runId, statsVersion])
+
+  React.useEffect(() => {
+    setCompanyPagination((prev) => ({ ...prev, pageIndex: 0 }))
+  }, [results?.runId])
 
   function formatCredits(value: number | null) {
     if (value === null || Number.isNaN(value)) return "—"
@@ -195,6 +203,54 @@ export function RankingClient() {
       ).length
       return count + companyCount
     }, 0) ?? 0
+
+  const companies = React.useMemo(() => {
+    const list = results?.companies ?? []
+    return [...list].sort((a, b) => {
+      const nameSort = a.companyName.localeCompare(b.companyName)
+      if (nameSort !== 0) return nameSort
+      return a.companyId.localeCompare(b.companyId)
+    })
+  }, [results?.companies])
+
+  const companyPageCount = Math.max(
+    1,
+    Math.ceil(companies.length / companyPagination.pageSize)
+  )
+  const companyPageIndex = Math.min(
+    companyPagination.pageIndex,
+    companyPageCount - 1
+  )
+  const pagedCompanies = companies.slice(
+    companyPageIndex * companyPagination.pageSize,
+    (companyPageIndex + 1) * companyPagination.pageSize
+  )
+
+  React.useEffect(() => {
+    if (companyPagination.pageIndex !== companyPageIndex) {
+      setCompanyPagination((prev) => ({
+        ...prev,
+        pageIndex: companyPageIndex,
+      }))
+    }
+  }, [companyPageIndex, companyPagination.pageIndex])
+
+  const companyPageItems = React.useMemo(() => {
+    if (companyPageCount <= 7) {
+      return Array.from({ length: companyPageCount }, (_, index) => index)
+    }
+
+    const items: Array<number | "ellipsis"> = [0]
+    const start = Math.max(1, companyPageIndex - 1)
+    const end = Math.min(companyPageCount - 2, companyPageIndex + 1)
+
+    if (start > 1) items.push("ellipsis")
+    for (let i = start; i <= end; i += 1) items.push(i)
+    if (end < companyPageCount - 2) items.push("ellipsis")
+    items.push(companyPageCount - 1)
+
+    return items
+  }, [companyPageCount, companyPageIndex])
 
   async function runRanking() {
     setIsRunning(true)
