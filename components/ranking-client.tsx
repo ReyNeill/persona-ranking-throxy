@@ -111,8 +111,10 @@ export function RankingClient() {
     )
 
     for (const company of results.companies) {
-      const selectedLeads = company.leads.filter((lead) => lead.selected)
-      for (const lead of selectedLeads) {
+      const topLeads = company.leads.filter(
+        (lead) => lead.rank !== null && lead.rank <= exportTopN
+      )
+      for (const lead of topLeads) {
         rows.push(
           [
             company.companyName ?? "",
@@ -143,12 +145,14 @@ export function RankingClient() {
     URL.revokeObjectURL(url)
   }
 
-  const selectedCount =
-    results?.companies?.reduce(
-      (count, company) =>
-        count + company.leads.filter((lead) => lead.selected).length,
-      0
-    ) ?? 0
+  const exportTopN = results?.topN ?? topN
+  const exportableCount =
+    results?.companies?.reduce((count, company) => {
+      const companyCount = company.leads.filter(
+        (lead) => lead.rank !== null && lead.rank <= exportTopN
+      ).length
+      return count + companyCount
+    }, 0) ?? 0
 
   async function runRanking() {
     setIsRunning(true)
@@ -334,7 +338,7 @@ export function RankingClient() {
               variant="default"
               size="sm"
               onClick={exportSelectedToCsv}
-              disabled={selectedCount === 0}
+              disabled={exportableCount === 0}
             >
               Export top leads CSV
             </Button>
