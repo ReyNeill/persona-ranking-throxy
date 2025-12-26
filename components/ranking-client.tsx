@@ -97,6 +97,10 @@ export function RankingClient() {
     RankingResponse["companies"][number] | null
   >(null)
   const [isCompanyDialogOpen, setIsCompanyDialogOpen] = React.useState(false)
+  const [isPromptDialogOpen, setIsPromptDialogOpen] = React.useState(false)
+  const [isPromptLoading, setIsPromptLoading] = React.useState(false)
+  const [promptError, setPromptError] = React.useState<string | null>(null)
+  const [activePrompt, setActivePrompt] = React.useState<string | null>(null)
   const [progress, setProgress] = React.useState<{
     status: ProgressStatus
     percent: number
@@ -150,6 +154,37 @@ export function RankingClient() {
       isMounted = false
     }
   }, [results?.runId, statsVersion])
+
+  React.useEffect(() => {
+    if (!isPromptDialogOpen) return
+    let isMounted = true
+    setIsPromptLoading(true)
+    setPromptError(null)
+    fetch("/api/prompts/active")
+      .then(async (res) => {
+        const data = await res.json()
+        if (!res.ok) {
+          throw new Error(data?.error ?? "Failed to load prompt.")
+        }
+        return data as { prompt?: string | null }
+      })
+      .then((data) => {
+        if (!isMounted) return
+        setActivePrompt(data.prompt ?? null)
+      })
+      .catch((err) => {
+        if (!isMounted) return
+        setPromptError(err instanceof Error ? err.message : "Failed to load.")
+      })
+      .finally(() => {
+        if (!isMounted) return
+        setIsPromptLoading(false)
+      })
+
+    return () => {
+      isMounted = false
+    }
+  }, [isPromptDialogOpen])
 
   React.useEffect(() => {
     setCompanyPagination((prev) => ({ ...prev, pageIndex: 0 }))
@@ -722,6 +757,13 @@ export function RankingClient() {
               </p>
             ) : null}
             <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setIsPromptDialogOpen(true)}
+            >
+              Active best prompt
+            </Button>
+            <Button
               variant="default"
               size="sm"
               onClick={exportSelectedToCsv}
@@ -951,6 +993,44 @@ export function RankingClient() {
               </div>
             </div>
           ) : null}
+        </DialogContent>
+      </Dialog>
+      <Dialog
+        open={isPromptDialogOpen}
+        onOpenChange={(open) => {
+          setIsPromptDialogOpen(open)
+          if (!open) {
+            setPromptError(null)
+          }
+        }}
+      >
+        <DialogContent className="bg-card text-card-foreground max-w-[calc(100%-2rem)] w-[95vw] text-sm sm:max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Active prompt template</DialogTitle>
+            <DialogDescription>
+              This prompt is stored in the database and used for persona-to-query
+              rewriting.
+            </DialogDescription>
+          </DialogHeader>
+          {isPromptLoading ? (
+            <div className="space-y-3">
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-[92%]" />
+              <Skeleton className="h-4 w-[88%]" />
+              <Skeleton className="h-4 w-[80%]" />
+              <Skeleton className="h-4 w-[86%]" />
+            </div>
+          ) : promptError ? (
+            <div className="text-destructive text-sm">{promptError}</div>
+          ) : activePrompt ? (
+            <div className="max-h-[60vh] overflow-y-auto rounded-lg border bg-muted/40 p-3 font-mono text-xs whitespace-pre-wrap">
+              {activePrompt}
+            </div>
+          ) : (
+            <div className="text-muted-foreground text-sm">
+              No active prompt stored.
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>

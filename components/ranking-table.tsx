@@ -217,8 +217,8 @@ export function RankingTable({
           ))}
         </TableHeader>
         <TableBody>
-          {table.getRowModel().rows.length ? (
-            table.getRowModel().rows.map((row) => (
+          {table.getPaginationRowModel().rows.length ? (
+            table.getPaginationRowModel().rows.map((row) => (
               <TableRow
                 key={row.id}
                 data-state={row.original.selected ? "selected" : undefined}

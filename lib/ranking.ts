@@ -22,6 +22,7 @@ type LeadRow = {
   title: string | null
   email: string | null
   linkedin_url: string | null
+  data?: Record<string, unknown> | null
   company_id: string
   company: {
     id: string
@@ -163,15 +164,38 @@ const RERANK_COST_PER_1K_DOCS = Number.parseFloat(
 )
 
 function formatLeadText(lead: LeadRow) {
+  const employeeRange =
+    process.env.INCLUDE_EMPLOYEE_RANGE === "true"
+      ? extractEmployeeRange(lead.data)
+      : null
   const parts = [
     lead.full_name ? `Name: ${lead.full_name}` : null,
     lead.title ? `Title: ${lead.title}` : null,
     `Company: ${lead.company.name}`,
+    employeeRange ? `Employee Range: ${employeeRange}` : null,
     lead.email ? `Email: ${lead.email}` : null,
     lead.linkedin_url ? `LinkedIn: ${lead.linkedin_url}` : null,
   ].filter(Boolean)
 
   return parts.join(" | ")
+}
+
+function extractEmployeeRange(data?: Record<string, unknown> | null) {
+  if (!data) return null
+  const keys = [
+    "employee range",
+    "employee_range",
+    "employeeRange",
+    "employees",
+    "employee count",
+    "employee_count",
+  ]
+  for (const key of keys) {
+    const value = data[key]
+    if (typeof value === "string" && value.trim()) return value.trim()
+    if (typeof value === "number") return value.toString()
+  }
+  return null
 }
 
 function normalizeRate(value: number) {
@@ -235,14 +259,16 @@ async function wrapWithDevtools(model: ReturnType<typeof getOpenRouterModel>) {
 }
 
 async function buildPersonaQuery(
-  personaSpec: string
+  personaSpec: string,
+  promptTemplateOverride?: string | null
 ): Promise<PersonaQueryResult> {
   const model = getOpenRouterModel(DEFAULT_OPENROUTER_MODEL)
+  const promptTemplate =
+    promptTemplateOverride?.trim() || getPersonaQueryPromptTemplate()
   if (!model) return { query: personaSpec }
 
   try {
     const wrappedModel = await wrapWithDevtools(model)
-    const promptTemplate = getPersonaQueryPromptTemplate()
     const prompt = renderPersonaQueryPrompt(promptTemplate, personaSpec)
     const result = await generateText({
       // OpenRouter SDK model types don't match AI SDK language model typings yet.
@@ -267,6 +293,23 @@ async function buildPersonaQuery(
     }
   } catch {
     return { query: personaSpec }
+  }
+}
+
+async function getActivePersonaQueryPrompt(
+  supabase: ReturnType<typeof createSupabaseServerClient>
+) {
+  try {
+    const { data, error } = await supabase
+      .from("prompt_settings")
+      .select("persona_query_prompt")
+      .eq("id", "active")
+      .single()
+
+    if (error) return null
+    return data?.persona_query_prompt ?? null
+  } catch {
+    return null
   }
 }
 
@@ -364,7 +407,7 @@ export async function runRanking({
   const leadQuery = supabase
     .from("leads")
     .select(
-      "id, full_name, title, email, linkedin_url, company_id, company:companies(id, name)"
+      "id, full_name, title, email, linkedin_url, data, company_id, company:companies(id, name)"
     )
 
   const { data: leads, error: leadsError } = ingestionId
@@ -386,7 +429,8 @@ export async function runRanking({
     grouped.set(lead.company.id, list)
   }
 
-  const personaQuery = await buildPersonaQuery(personaSpec)
+  const activePrompt = await getActivePersonaQueryPrompt(supabase)
+  const personaQuery = await buildPersonaQuery(personaSpec, activePrompt)
   await emit({ type: "persona_ready", runId: run.id })
 
   const totalCompanies = grouped.size

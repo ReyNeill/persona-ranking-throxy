@@ -27,12 +27,14 @@ OPENROUTER_COST_PER_1K_TOKENS=
 COHERE_RERANK_COST_PER_SEARCH=
 COHERE_RERANK_COST_PER_1K_SEARCHES=
 COHERE_RERANK_COST_PER_1K_DOCS=
+INCLUDE_EMPLOYEE_RANGE=false
 AI_DEVTOOLS=false
 ```
 
 3) Apply the database schema
 
 - Run the SQL in `supabase/migrations/20251226_persona_ranking.sql` **and** `supabase/migrations/20251226_ai_calls.sql`.
+  Also run `supabase/migrations/20251226_prompt_settings.sql` to store the active persona query prompt.
   (Alternatively, run all SQL files in `supabase/migrations/`.)
 
 4) Load leads (CSV ingestion)
@@ -53,8 +55,14 @@ Optional flags:
 
 - `--eval path/to/eval_set.csv`
 - `--persona context/persona_spec.md`
-- `--objective ndcg|mrr|precision|top1`
+- `--objective ndcg|mrr|precision|top1` (default: precision)
 - `--max-companies 20` (faster iteration)
+- `--train-ratio 0.8` (company-level split)
+- `--mutations 2` (heuristic prompt mutations per round)
+- `--include-employee-range` (adds eval-only employee range to documents)
+- `--budget-usd 10` (exit if estimated cost exceeds budget)
+- `--dry-run` (print cost estimate and exit)
+- `--debug` (print optimizer meta-prompts + candidate prompts)
 - `--output context/optimized_persona_prompt.txt`
 
 To apply the best prompt in production, copy it into `PERSONA_QUERY_PROMPT` in `.env.local`.
@@ -72,6 +80,7 @@ Open `http://localhost:3000` to run ranking from the UI.
 ## Architecture overview
 
 - Data model in Postgres/Supabase: companies, leads, personas, ranking runs, lead rankings.
+- `prompt_settings` stores the active persona-to-query prompt template (DB overrides env defaults).
 - CSV ingestion via `scripts/ingest-leads.ts` (server-side) or `/api/ingest` (UI upload).
 - Ranking pipeline in `/api/rank` (JSON) and `/api/rank/stream` (SSE):
   - (Optional) OpenRouter summarizes the persona spec into a concise query.
