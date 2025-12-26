@@ -2,7 +2,7 @@
 - [x] Make the table sortable by rank.
 - [x] Export top N people per company to CSV.
 - [x] Add and rank new leads through CSV uploads.
-- [ ] Real-time ranking progress and table updates.
+- [x] Real-time ranking progress and table updates.
 - [ ] Automatic prompt optimization.
 - [ ] Create your own challenge! Show us where you shine.
 

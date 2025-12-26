@@ -53,10 +53,11 @@ Open `http://localhost:3000` to run ranking from the UI.
 
 - Data model in Postgres/Supabase: companies, leads, personas, ranking runs, lead rankings.
 - CSV ingestion via `scripts/ingest-leads.ts` (server-side) or `/api/ingest` (UI upload).
-- Ranking pipeline in `/api/rank`:
+- Ranking pipeline in `/api/rank` (JSON) and `/api/rank/stream` (SSE):
   - (Optional) OpenRouter summarizes the persona spec into a concise query.
   - Cohere Rerank scores each lead per company.
   - Results are stored in `lead_rankings` and shown in the UI.
+- The UI streams live progress + incremental table updates over SSE while ranking runs.
 - AI usage is recorded per call in `ai_calls` and summarized in `/api/stats`.
 - Results view in the homepage table, grouped by company.
 
@@ -69,7 +70,7 @@ Open `http://localhost:3000` to run ranking from the UI.
 
 ## Tradeoffs
 
-- **Sync ranking**: the pipeline runs in a single API request. For larger CSVs, this should move to a background job/queue.
+- **Sync ranking (streamed)**: ranking runs in a single API request and streams progress to the UI. For larger CSVs, this should move to a background job/queue.
 - **No auth / RLS policy**: MVP uses a service role key server-side only. Production should add auth and RLS.
 - **Heuristic reasons**: reasons are templated rather than generated for every lead to keep latency and costs low.
 - **Cost accuracy**: OpenRouter usage accounting is preferred when enabled. Cohere rerank cost should use per-search pricing (`COHERE_RERANK_COST_PER_SEARCH` or per-1k searches).
