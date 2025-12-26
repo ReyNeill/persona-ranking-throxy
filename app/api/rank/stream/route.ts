@@ -2,7 +2,12 @@ import { runRanking } from "@/lib/ranking"
 
 export const runtime = "nodejs"
 
-export async function POST(request: Request) {
+type RunRankingFn = typeof runRanking
+
+export async function handleRankStreamRequest(
+  request: Request,
+  deps: { runRanking: RunRankingFn } = { runRanking }
+) {
   const body = await request.json().catch(() => null)
 
   if (!body?.personaSpec || typeof body.personaSpec !== "string") {
@@ -50,7 +55,7 @@ export async function POST(request: Request) {
 
       request.signal.addEventListener("abort", handleAbort)
 
-      runRanking(
+      deps.runRanking(
         {
           personaSpec: trimmedSpec,
           topN: Math.max(1, Math.min(topN, 25)),
@@ -81,4 +86,8 @@ export async function POST(request: Request) {
       Connection: "keep-alive",
     },
   })
+}
+
+export async function POST(request: Request) {
+  return handleRankStreamRequest(request)
 }

@@ -4,7 +4,12 @@ import { runRanking } from "@/lib/ranking"
 
 export const runtime = "nodejs"
 
-export async function POST(request: Request) {
+type RunRankingFn = typeof runRanking
+
+export async function handleRankRequest(
+  request: Request,
+  deps: { runRanking: RunRankingFn } = { runRanking }
+) {
   const body = await request.json().catch(() => null)
 
   if (!body?.personaSpec || typeof body.personaSpec !== "string") {
@@ -28,7 +33,7 @@ export async function POST(request: Request) {
   const minScore = Number.isFinite(minScoreValue) ? minScoreValue : 0.4
 
   try {
-    const result = await runRanking({
+    const result = await deps.runRanking({
       personaSpec: trimmedSpec,
       topN: Math.max(1, Math.min(topN, 25)),
       minScore: Math.max(0, Math.min(minScore, 1)),
@@ -40,4 +45,8 @@ export async function POST(request: Request) {
     const message = error instanceof Error ? error.message : "Unknown error"
     return NextResponse.json({ error: message }, { status: 500 })
   }
+}
+
+export async function POST(request: Request) {
+  return handleRankRequest(request)
 }

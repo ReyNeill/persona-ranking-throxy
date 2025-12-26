@@ -4,12 +4,17 @@ import { getRankingResults } from "@/lib/ranking"
 
 export const runtime = "nodejs"
 
-export async function GET(request: Request) {
+type GetRankingResultsFn = typeof getRankingResults
+
+export async function handleResultsRequest(
+  request: Request,
+  deps: { getRankingResults: GetRankingResultsFn } = { getRankingResults }
+) {
   const { searchParams } = new URL(request.url)
   const runId = searchParams.get("runId")
 
   try {
-    const result = await getRankingResults(runId)
+    const result = await deps.getRankingResults(runId)
     if (!result) {
       return NextResponse.json({ runId: null, companies: [] })
     }
@@ -18,4 +23,8 @@ export async function GET(request: Request) {
     const message = error instanceof Error ? error.message : "Unknown error"
     return NextResponse.json({ error: message }, { status: 500 })
   }
+}
+
+export async function GET(request: Request) {
+  return handleResultsRequest(request)
 }

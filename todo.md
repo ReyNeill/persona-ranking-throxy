@@ -4,9 +4,8 @@
 - [x] Add and rank new leads through CSV uploads.
 - [x] Real-time ranking progress and table updates.
 - [x] Automatic prompt optimization.
-- [ ] Create your own challenge! Show us where you shine.
 
-**Optional**
-- [ ] Background job queue for large CSVs.
-- [ ] Ingestion API endpoint plus upload UI.
-- [ ] Per-lead AI explanations using OpenRouter.
+# personal ones
+- [x] test suite
+- [ ] make a favicon
+- [ ] background job queue for large CSVs.

@@ -77,6 +77,14 @@ bun run dev
 
 Open `http://localhost:3000` to run ranking from the UI.
 
+## Testing
+
+Run the unit test suite with Bun:
+
+```bash
+bun run test
+```
+
 ## Architecture overview
 
 - Data model in Postgres/Supabase: companies, leads, personas, ranking runs, lead rankings.

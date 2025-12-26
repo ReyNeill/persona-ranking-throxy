@@ -7,6 +7,7 @@
     "build": "npx tsc --noEmit && next build",
     "start": "next start",
     "lint": "eslint",
+    "test": "bun test",
     "ingest:leads": "bun scripts/ingest-leads.ts",
     "optimize:prompt": "bun scripts/optimize-prompt.ts"
   },
