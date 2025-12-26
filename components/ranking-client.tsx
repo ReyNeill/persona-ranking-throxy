@@ -74,6 +74,70 @@ export function RankingClient() {
     return new Intl.NumberFormat("en-US").format(value)
   }
 
+  function escapeCsv(value: string) {
+    if (value.includes('"') || value.includes(",") || value.includes("\n")) {
+      return `"${value.replace(/"/g, '""')}"`
+    }
+    return value
+  }
+
+  function exportSelectedToCsv() {
+    if (!results?.companies?.length) return
+
+    const rows: string[] = []
+    rows.push(
+      [
+        "company",
+        "lead_name",
+        "title",
+        "email",
+        "linkedin",
+        "score",
+        "rank",
+        "reason",
+      ].join(",")
+    )
+
+    for (const company of results.companies) {
+      const selectedLeads = company.leads.filter((lead) => lead.selected)
+      for (const lead of selectedLeads) {
+        rows.push(
+          [
+            company.companyName ?? "",
+            lead.fullName ?? "",
+            lead.title ?? "",
+            lead.email ?? "",
+            lead.linkedinUrl ?? "",
+            lead.score !== null ? lead.score.toFixed(2) : "",
+            lead.rank !== null ? String(lead.rank) : "",
+            lead.reason ?? "",
+          ]
+            .map((value) => escapeCsv(String(value)))
+            .join(",")
+        )
+      }
+    }
+
+    if (rows.length <= 1) return
+
+    const blob = new Blob([rows.join("\n")], { type: "text/csv;charset=utf-8;" })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement("a")
+    link.href = url
+    link.download = "persona-ranking-top-leads.csv"
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+  }
+
+  const selectedCount =
+    results?.companies?.reduce(
+      (count, company) =>
+        count + company.leads.filter((lead) => lead.selected).length,
+      0
+    ) ?? 0
+
   async function runRanking() {
     setIsRunning(true)
     setError(null)
@@ -224,13 +288,23 @@ export function RankingClient() {
       ) : null}
 
       <section className="flex flex-col gap-4">
-        <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-xl font-semibold">Results</h2>
-          {results?.runId ? (
-            <p className="text-muted-foreground text-xs">
-              Run ID: {results.runId}
-            </p>
-          ) : null}
+          <div className="flex flex-wrap items-center gap-3">
+            {results?.runId ? (
+              <p className="text-muted-foreground text-xs">
+                Run ID: {results.runId}
+              </p>
+            ) : null}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={exportSelectedToCsv}
+              disabled={selectedCount === 0}
+            >
+              Export top leads CSV
+            </Button>
+          </div>
         </div>
 
         {!results?.companies?.length ? (
