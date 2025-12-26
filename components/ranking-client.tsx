@@ -4,6 +4,17 @@ import * as React from "react"
 
 import { RankingTable } from "@/components/ranking-table"
 import type { RankingResponse } from "@/components/ranking-types"
+import { Button } from "@/components/ui/button"
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Textarea } from "@/components/ui/textarea"
 
 const DEFAULT_PERSONA_SPEC = `We sell a sales engagement platform.
 Target: revenue leaders (VP Sales, Head of Sales, Sales Ops, RevOps).
@@ -75,53 +86,62 @@ export function RankingClient() {
         </p>
       </section>
 
-      <section className="grid gap-6 rounded-2xl border border-dashed p-6">
-        <div className="grid gap-3">
-          <label className="text-sm font-medium">Persona spec</label>
-          <textarea
-            value={personaSpec}
-            onChange={(event) => setPersonaSpec(event.target.value)}
-            className="min-h-[160px] w-full resize-y rounded-xl border px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-slate-400"
-          />
-        </div>
-
-        <div className="grid gap-4 md:grid-cols-3">
-          <label className="flex flex-col gap-2 text-sm font-medium">
-            Top N per company
-            <input
-              type="number"
-              min={1}
-              max={25}
-              value={topN}
-              onChange={(event) => setTopN(Number(event.target.value))}
-              className="rounded-xl border px-3 py-2 text-sm"
+      <Card>
+        <CardHeader>
+          <CardTitle>Ranking Controls</CardTitle>
+          <CardDescription>
+            Configure the persona and pick how many leads per company to keep.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-6">
+          <div className="grid gap-2">
+            <Label htmlFor="persona-spec">Persona spec</Label>
+            <Textarea
+              id="persona-spec"
+              value={personaSpec}
+              onChange={(event) => setPersonaSpec(event.target.value)}
+              className="min-h-[160px] resize-y"
             />
-          </label>
-          <label className="flex flex-col gap-2 text-sm font-medium">
-            Relevance threshold (0-1)
-            <input
-              type="number"
-              min={0}
-              max={1}
-              step={0.05}
-              value={minScore}
-              onChange={(event) => setMinScore(Number(event.target.value))}
-              className="rounded-xl border px-3 py-2 text-sm"
-            />
-          </label>
-          <div className="flex items-end">
-            <button
-              onClick={runRanking}
-              disabled={isRunning}
-              className="w-full rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white disabled:opacity-60"
-            >
-              {isRunning ? "Ranking..." : "Run ranking"}
-            </button>
           </div>
-        </div>
 
-        {error ? <p className="text-sm text-red-500">{error}</p> : null}
-      </section>
+          <div className="grid gap-4 md:grid-cols-3">
+            <div className="grid gap-2">
+              <Label htmlFor="top-n">Top N per company</Label>
+              <Input
+                id="top-n"
+                type="number"
+                min={1}
+                max={25}
+                value={topN}
+                onChange={(event) => setTopN(Number(event.target.value))}
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="min-score">Relevance threshold (0-1)</Label>
+              <Input
+                id="min-score"
+                type="number"
+                min={0}
+                max={1}
+                step={0.05}
+                value={minScore}
+                onChange={(event) => setMinScore(Number(event.target.value))}
+              />
+            </div>
+            <div className="flex items-end">
+              <Button
+                onClick={runRanking}
+                disabled={isRunning}
+                className="w-full"
+              >
+                {isRunning ? "Ranking..." : "Run ranking"}
+              </Button>
+            </div>
+          </div>
+
+          {error ? <p className="text-destructive text-sm">{error}</p> : null}
+        </CardContent>
+      </Card>
 
       <section className="flex flex-col gap-4">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -134,26 +154,29 @@ export function RankingClient() {
         </div>
 
         {!results?.companies?.length ? (
-          <div className="text-muted-foreground rounded-2xl border border-dashed p-6 text-sm">
-            No rankings yet. Load a CSV and run the ranking to see results.
-          </div>
+          <Card>
+            <CardContent className="text-muted-foreground py-6 text-sm">
+              No rankings yet. Load a CSV and run the ranking to see results.
+            </CardContent>
+          </Card>
         ) : (
           <div className="flex flex-col gap-6">
             {results.companies.map((company) => (
-              <div
-                key={company.companyId}
-                className="rounded-2xl border p-5"
-              >
-                <div className="mb-4 flex items-center justify-between">
-                  <h3 className="text-lg font-semibold">{company.companyName}</h3>
+              <Card key={company.companyId}>
+                <CardHeader className="flex flex-row items-center justify-between gap-4">
+                  <div>
+                    <CardTitle className="text-lg">
+                      {company.companyName}
+                    </CardTitle>
+                  </div>
                   <span className="text-muted-foreground text-xs">
                     {company.leads.filter((lead) => lead.selected).length} selected
                   </span>
-                </div>
-                <div className="overflow-x-auto">
+                </CardHeader>
+                <CardContent>
                   <RankingTable leads={company.leads} />
-                </div>
-              </div>
+                </CardContent>
+              </Card>
             ))}
           </div>
         )}

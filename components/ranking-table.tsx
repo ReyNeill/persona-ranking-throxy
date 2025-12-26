@@ -22,7 +22,6 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import type { LeadResult } from "@/components/ranking-types"
-import { cn } from "@/lib/utils"
 
 type RankingTableProps = {
   leads: LeadResult[]
@@ -144,9 +143,6 @@ export function RankingTable({ leads }: RankingTableProps) {
               <TableRow
                 key={row.id}
                 data-state={row.original.selected ? "selected" : undefined}
-                className={cn(
-                  row.original.selected ? "bg-slate-50" : undefined
-                )}
               >
                 {row.getVisibleCells().map((cell) => (
                   <TableCell key={cell.id}>
