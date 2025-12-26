@@ -6,7 +6,7 @@ Persona Ranking Throxy
 1) Install dependencies
 
 ```bash
-npm install
+bun install
 ```
 
 2) Create `.env.local`
@@ -30,18 +30,21 @@ AI_DEVTOOLS=false
 
 3) Apply the database schema
 
-- Run the SQL in `supabase/migrations/20251226_persona_ranking.sql` on your Supabase project.
+- Run the SQL in `supabase/migrations/20251226_persona_ranking.sql` **and** `supabase/migrations/20251226_ai_calls.sql`.
+  (Alternatively, run all SQL files in `supabase/migrations/`.)
 
 4) Load leads (CSV ingestion)
 
 ```bash
-npm run ingest:leads -- --file path/to/leads.csv
+bun run ingest:leads -- --file path/to/leads.csv
 ```
 
-5) Start the app
+5) Or upload a CSV in the UI and rank immediately (Ranking Controls section).
+
+6) Start the app
 
 ```bash
-npm run dev
+bun run dev
 ```
 
 Open `http://localhost:3000` to run ranking from the UI.
@@ -49,7 +52,7 @@ Open `http://localhost:3000` to run ranking from the UI.
 ## Architecture overview
 
 - Data model in Postgres/Supabase: companies, leads, personas, ranking runs, lead rankings.
-- CSV ingestion via `scripts/ingest-leads.mjs` (server-side, no UI required).
+- CSV ingestion via `scripts/ingest-leads.ts` (server-side) or `/api/ingest` (UI upload).
 - Ranking pipeline in `/api/rank`:
   - (Optional) OpenRouter summarizes the persona spec into a concise query.
   - Cohere Rerank scores each lead per company.

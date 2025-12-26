@@ -20,6 +20,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/ui/textarea"
+import { toast } from "sonner"
 
 const DEFAULT_PERSONA_SPEC = `We sell a sales engagement platform.
 Target: revenue leaders (VP Sales, Head of Sales, Sales Ops, RevOps).
@@ -32,7 +33,10 @@ export function RankingClient() {
   const [minScore, setMinScore] = React.useState(0.4)
   const [results, setResults] = React.useState<RankingResponse | null>(null)
   const [stats, setStats] = React.useState<StatsResponse | null>(null)
+  const [csvFile, setCsvFile] = React.useState<File | null>(null)
+  const fileInputRef = React.useRef<HTMLInputElement>(null)
   const [isRunning, setIsRunning] = React.useState(false)
+  const [isUploading, setIsUploading] = React.useState(false)
   const [isLoadingResults, setIsLoadingResults] = React.useState(true)
   const [isLoadingStats, setIsLoadingStats] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
@@ -161,6 +165,29 @@ export function RankingClient() {
     setError(null)
 
     try {
+      let ingestionId: string | null = null
+
+      if (csvFile) {
+        setIsUploading(true)
+        const formData = new FormData()
+        formData.append("file", csvFile)
+
+        const ingestResponse = await fetch("/api/ingest", {
+          method: "POST",
+          body: formData,
+        })
+        const ingestData = await ingestResponse.json()
+        if (!ingestResponse.ok) {
+          throw new Error(ingestData.error ?? "Failed to ingest CSV")
+        }
+
+        ingestionId = ingestData.ingestionId
+        toast.success("Leads uploaded", {
+          description: `Loaded ${ingestData.leadCount} leads from ${csvFile.name} (${ingestData.companyCount} companies, ${ingestData.skippedCount} skipped).`,
+        })
+        setCsvFile(null)
+      }
+
       const response = await fetch("/api/rank", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -168,6 +195,7 @@ export function RankingClient() {
           personaSpec,
           topN,
           minScore,
+          ingestionId,
         }),
       })
 
@@ -177,11 +205,19 @@ export function RankingClient() {
       }
 
       setResults(data)
+      toast.success("Ranking complete", {
+        description: "Results updated with the latest ranking run.",
+      })
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unknown error")
+      const message = err instanceof Error ? err.message : "Unknown error"
+      setError(message)
+      toast.error("Ranking failed", {
+        description: message,
+      })
     } finally {
       setIsRunning(false)
       setIsLoadingResults(false)
+      setIsUploading(false)
     }
   }
 
@@ -213,6 +249,42 @@ export function RankingClient() {
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-6">
+          <div className="grid gap-4 md:grid-cols-3">
+            <div className="grid gap-2 text-center md:col-start-2">
+              <Label htmlFor="csv-upload" className="w-full text-center">
+                Upload new leads (CSV)
+              </Label>
+              <input
+                ref={fileInputRef}
+                id="csv-upload"
+                type="file"
+                accept=".csv"
+                className="sr-only"
+                onChange={(event) => {
+                  const file = event.target.files?.[0] ?? null
+                  setCsvFile(file)
+                }}
+              />
+              <div className="flex justify-center">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  {csvFile ? "Change CSV" : "Choose CSV"}
+                </Button>
+              </div>
+              {csvFile ? (
+                <p className="text-muted-foreground text-xs">
+                  Selected: {csvFile.name}
+                </p>
+              ) : null}
+              <p className="text-muted-foreground text-xs">
+                Upload a CSV to ingest and rank new leads immediately.
+              </p>
+            </div>
+          </div>
           <div className="grid gap-2">
             <Label htmlFor="persona-spec">Persona spec</Label>
             <Textarea
@@ -250,10 +322,14 @@ export function RankingClient() {
             <div className="flex items-end">
               <Button
                 onClick={runRanking}
-                disabled={isRunning}
+                disabled={isRunning || isUploading}
                 className="w-full"
               >
-                {isRunning ? "Ranking..." : "Run ranking"}
+                {isUploading
+                  ? "Uploading..."
+                  : isRunning
+                    ? "Ranking..."
+                    : "Run ranking"}
               </Button>
             </div>
           </div>
