@@ -18,6 +18,8 @@ COHERE_API_KEY=...
 OPENROUTER_API_KEY=...
 RERANK_MODEL=rerank-v3.5
 OPENROUTER_MODEL=openai/gpt-4o-mini
+PROMPT_OPTIMIZER_MODEL=
+PERSONA_QUERY_PROMPT=
 OPENROUTER_USAGE=true
 OPENROUTER_COST_PER_1K_INPUT=
 OPENROUTER_COST_PER_1K_OUTPUT=
@@ -38,6 +40,24 @@ AI_DEVTOOLS=false
 ```bash
 bun run ingest:leads -- --file path/to/leads.csv
 ```
+
+### Prompt optimization
+
+Use the evaluation set in `context/` to automatically improve the persona-to-query prompt.
+
+```bash
+bun run optimize:prompt -- --rounds 3 --candidates 4 --beam 3
+```
+
+Optional flags:
+
+- `--eval path/to/eval_set.csv`
+- `--persona context/persona_spec.md`
+- `--objective ndcg|mrr|precision|top1`
+- `--max-companies 20` (faster iteration)
+- `--output context/optimized_persona_prompt.txt`
+
+To apply the best prompt in production, copy it into `PERSONA_QUERY_PROMPT` in `.env.local`.
 
 5) Or upload a CSV in the UI and rank immediately (Ranking Controls section).
 

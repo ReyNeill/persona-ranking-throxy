@@ -7,7 +7,8 @@
     "build": "npx tsc --noEmit && next build",
     "start": "next start",
     "lint": "eslint",
-    "ingest:leads": "bun scripts/ingest-leads.ts"
+    "ingest:leads": "bun scripts/ingest-leads.ts",
+    "optimize:prompt": "bun scripts/optimize-prompt.ts"
   },
   "dependencies": {
     "@ai-sdk/cohere": "^3.0.1",

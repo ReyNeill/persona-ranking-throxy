@@ -3,7 +3,7 @@
 - [x] Export top N people per company to CSV.
 - [x] Add and rank new leads through CSV uploads.
 - [x] Real-time ranking progress and table updates.
-- [ ] Automatic prompt optimization.
+- [x] Automatic prompt optimization.
 - [ ] Create your own challenge! Show us where you shine.
 
 **Optional**

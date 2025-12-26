@@ -8,6 +8,10 @@ import { cohere } from "@ai-sdk/cohere"
 
 import { getOpenRouterModel } from "@/lib/ai/openrouter"
 import {
+  getPersonaQueryPromptTemplate,
+  renderPersonaQueryPrompt,
+} from "@/lib/prompts/persona-query"
+import {
   createSupabaseServerClient,
   createSupabaseServerClientOptional,
 } from "@/lib/supabase/server"
@@ -238,17 +242,12 @@ async function buildPersonaQuery(
 
   try {
     const wrappedModel = await wrapWithDevtools(model)
+    const promptTemplate = getPersonaQueryPromptTemplate()
+    const prompt = renderPersonaQueryPrompt(promptTemplate, personaSpec)
     const result = await generateText({
       // OpenRouter SDK model types don't match AI SDK language model typings yet.
       model: wrappedModel as any,
-      prompt: [
-        "You are helping rank company contacts for outbound sales.",
-        "Rewrite the persona spec into a concise, single-paragraph query that",
-        "describes the ideal contact and explicit disqualifiers.",
-        "Return only the query text, no bullets.",
-        "",
-        `Persona spec:\n${personaSpec}`,
-      ].join("\n"),
+      prompt,
     })
 
     const cleaned = result.text.trim()
