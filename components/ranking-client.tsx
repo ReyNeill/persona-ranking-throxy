@@ -551,9 +551,9 @@ export function RankingClient() {
               <Image
                 src="/throxy-logo.avif"
                 alt="PRS logo"
-                width={64}
-                height={28}
-                className="h-7 w-auto"
+                width={96}
+                height={42}
+                className="h-9 w-auto"
                 priority
               />
               <p className="text-primary/70 text-sm uppercase tracking-[0.3em]">
