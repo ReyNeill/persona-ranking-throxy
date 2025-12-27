@@ -164,6 +164,10 @@ export function RankingClient() {
   )
   const [leaderboard, setLeaderboard] =
     React.useState<PromptLeaderboard | null>(null)
+  const [isLeaderboardPromptOpen, setIsLeaderboardPromptOpen] =
+    React.useState(false)
+  const [selectedLeaderboardPrompt, setSelectedLeaderboardPrompt] =
+    React.useState<PromptLeaderboardEntry | null>(null)
   const [progress, setProgress] = React.useState<{
     status: ProgressStatus
     percent: number
@@ -316,6 +320,16 @@ export function RankingClient() {
     if (Number.isNaN(parsed.getTime())) return "—"
     return parsed.toLocaleString("en-US")
   }
+
+  const leaderboardEntries = React.useMemo(() => {
+    const entries = leaderboard?.entries ?? []
+    return [...entries].sort((a, b) => {
+      const aScore = Number.isFinite(a.score) ? a.score : -Infinity
+      const bScore = Number.isFinite(b.score) ? b.score : -Infinity
+      if (aScore !== bScore) return bScore - aScore
+      return (a.prompt ?? "").localeCompare(b.prompt ?? "")
+    })
+  }, [leaderboard?.entries])
 
   function escapeCsv(value: string) {
     if (value.includes('"') || value.includes(",") || value.includes("\n")) {
@@ -848,60 +862,71 @@ export function RankingClient() {
       {isLoadingStats ? (
         <section className="grid gap-4 md:grid-cols-4">
           {Array.from({ length: 4 }).map((_, index) => (
-            <Card key={`stats-skeleton-${index}`} className="ring-primary/10">
+            <Card
+              key={`stats-skeleton-${index}`}
+              className="border-secondary bg-secondary text-secondary-foreground ring-secondary/30"
+            >
               <CardHeader className="space-y-2">
-                <Skeleton className="h-3 w-24" />
-                <Skeleton className="h-6 w-20" />
+                <Skeleton className="h-3.5 w-32 bg-secondary-foreground/20" />
+                <Skeleton className="h-6 w-24 bg-secondary-foreground/20" />
               </CardHeader>
               <CardContent>
-                <Skeleton className="h-3 w-28" />
+                <Skeleton className="h-3 w-20 bg-secondary-foreground/20" />
               </CardContent>
             </Card>
           ))}
         </section>
       ) : stats ? (
         <section className="grid gap-4 md:grid-cols-4">
-          <Card className="ring-primary/10">
+          <Card className="border-secondary bg-secondary text-secondary-foreground ring-secondary/30">
             <CardHeader className="space-y-1">
-              <CardDescription>Total cost (credits)</CardDescription>
+              <CardDescription className="text-secondary-foreground/80">
+                Total cost (credits)
+              </CardDescription>
               <CardTitle className="text-xl">
                 {formatCredits(stats.totals.totalCost)}
               </CardTitle>
             </CardHeader>
-            <CardContent className="text-muted-foreground text-xs">
+            <CardContent className="text-secondary-foreground/80 text-xs">
               {formatNumber(stats.totals.callCount)} calls
             </CardContent>
           </Card>
-          <Card className="ring-primary/10">
+          <Card className="border-secondary bg-secondary text-secondary-foreground ring-secondary/30">
             <CardHeader className="space-y-1">
-              <CardDescription>Avg cost / call (credits)</CardDescription>
+              <CardDescription className="text-secondary-foreground/80">
+                Avg cost / call (credits)
+              </CardDescription>
               <CardTitle className="text-xl">
                 {formatCredits(stats.totals.avgCost)}
               </CardTitle>
             </CardHeader>
-            <CardContent className="text-muted-foreground text-xs">
+            <CardContent className="text-secondary-foreground/80 text-xs">
               {formatNumber(stats.totals.inputTokens)} input tokens
             </CardContent>
           </Card>
-          <Card className="ring-primary/10">
+          <Card className="border-secondary bg-secondary text-secondary-foreground ring-secondary/30">
             <CardHeader className="space-y-1">
-              <CardDescription>Output tokens</CardDescription>
+              <CardDescription className="text-secondary-foreground/80">
+                Output tokens
+              </CardDescription>
               <CardTitle className="text-xl">
                 {formatNumber(stats.totals.outputTokens)}
               </CardTitle>
             </CardHeader>
-            <CardContent className="text-muted-foreground text-xs">
+            <CardContent className="text-secondary-foreground/80 text-xs">
               {formatNumber(stats.totals.documents)} documents reranked
             </CardContent>
           </Card>
-          <Card className="ring-primary/10">
+          <Card className="border-secondary bg-secondary text-secondary-foreground ring-secondary/30">
             <CardHeader className="space-y-1">
-              <CardDescription>Last run cost (credits)</CardDescription>
+              <CardDescription className="text-secondary-foreground/80">
+                Last run cost (credits)
+              </CardDescription>
               <CardTitle className="text-xl">
                 {formatCredits(stats.run?.totalCost ?? null)}
               </CardTitle>
             </CardHeader>
-            <CardContent className="text-muted-foreground text-xs">
+            <CardContent className="text-secondary-foreground/80 text-xs">
               {formatNumber(stats.run?.callCount ?? 0)} calls
             </CardContent>
           </Card>
@@ -917,7 +942,12 @@ export function RankingClient() {
                 Live updates…
               </span>
             ) : null}
-            {results?.runId ? (
+            {isLoadingResults ? (
+              <div className="flex items-center gap-2 text-xs">
+                <span className="text-muted-foreground">Run ID:</span>
+                <Skeleton className="h-3 w-32" />
+              </div>
+            ) : results?.runId ? (
               <p className="text-muted-foreground text-xs">
                 Run ID: {results.runId}
               </p>
@@ -949,16 +979,39 @@ export function RankingClient() {
 
         {isLoadingResults ? (
           <div className="flex flex-col gap-6">
-            {Array.from({ length: 2 }).map((_, index) => (
+            {Array.from({ length: 1 }).map((_, index) => (
               <Card key={`results-skeleton-${index}`} className="ring-primary/10">
                 <CardHeader className="space-y-2">
-                  <Skeleton className="h-4 w-40" />
-                  <Skeleton className="h-3 w-24" />
+                  <Skeleton className="h-4 w-32" />
+                  <Skeleton className="h-3 w-56" />
                 </CardHeader>
                 <CardContent className="space-y-3">
-                  <Skeleton className="h-8 w-full" />
-                  <Skeleton className="h-8 w-full" />
-                  <Skeleton className="h-8 w-full" />
+                  <div className="overflow-hidden rounded-2xl border">
+                    <div className="border-b bg-muted/40 px-4 py-2">
+                      <div className="grid grid-cols-[45%_12%_10%_13%_20%] gap-3">
+                        {Array.from({ length: 5 }).map((_, colIndex) => (
+                          <Skeleton
+                            key={`results-skeleton-header-${index}-${colIndex}`}
+                            className="h-3 w-full"
+                          />
+                        ))}
+                      </div>
+                    </div>
+                    <div className="divide-y">
+                      {Array.from({ length: 4 }).map((_, rowIndex) => (
+                        <div
+                          key={`results-skeleton-row-${index}-${rowIndex}`}
+                          className="grid grid-cols-[45%_12%_10%_13%_20%] items-center gap-3 px-4 py-3"
+                        >
+                          <Skeleton className="h-4 w-3/4" />
+                          <Skeleton className="h-3 w-8 justify-self-end" />
+                          <Skeleton className="h-3 w-8 justify-self-end" />
+                          <Skeleton className="h-3 w-12 justify-self-end" />
+                          <Skeleton className="h-7 w-14 justify-self-end" />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 </CardContent>
               </Card>
             ))}
@@ -1028,7 +1081,7 @@ export function RankingClient() {
                             <TableCell className="text-right">
                               <Button
                                 size="sm"
-                                variant="outline"
+                                variant="secondary"
                                 onClick={() => {
                                   setSelectedCompany(company)
                                   setIsCompanyDialogOpen(true)
@@ -1193,12 +1246,12 @@ export function RankingClient() {
             </div>
           ) : leaderboardError ? (
             <div className="text-destructive text-sm">{leaderboardError}</div>
-          ) : leaderboard?.entries?.length ? (
+          ) : leaderboardEntries.length ? (
             <div className="space-y-4">
               <div className="flex flex-wrap items-center gap-3 text-muted-foreground text-xs">
-                <span>Objective: {leaderboard.objective ?? "—"}</span>
-                <span>K: {leaderboard.k ?? "—"}</span>
-                <span>Updated: {formatDateTime(leaderboard.updatedAt)}</span>
+                <span>Objective: {leaderboard?.objective ?? "—"}</span>
+                <span>K: {leaderboard?.k ?? "—"}</span>
+                <span>Updated: {formatDateTime(leaderboard?.updatedAt)}</span>
               </div>
               <div className="overflow-hidden rounded-2xl border">
                 <Table className="table-fixed text-xs [&_td]:align-top [&_td]:py-2">
@@ -1220,7 +1273,7 @@ export function RankingClient() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {leaderboard.entries.map((entry, index) => {
+                    {leaderboardEntries.map((entry, index) => {
                       const metrics = entry.testMetrics ?? entry.trainMetrics
                       return (
                         <TableRow key={`leader-${index}`}>
@@ -1243,12 +1296,17 @@ export function RankingClient() {
                             {formatMetric(metrics.top1)}
                           </TableCell>
                           <TableCell>
-                            <div
-                              className="line-clamp-2 text-muted-foreground"
-                              title={entry.prompt}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedLeaderboardPrompt(entry)
+                                setIsLeaderboardPromptOpen(true)
+                              }}
+                              className="text-left text-muted-foreground line-clamp-2 hover:text-foreground"
+                              title="Click to view full prompt"
                             >
                               {entry.prompt}
-                            </div>
+                            </button>
                           </TableCell>
                         </TableRow>
                       )
@@ -1256,13 +1314,13 @@ export function RankingClient() {
                   </TableBody>
                 </Table>
               </div>
-              {leaderboard.evalPath || leaderboard.personaPath ? (
+              {leaderboard?.evalPath || leaderboard?.personaPath ? (
                 <div className="text-muted-foreground text-xs">
-                  {leaderboard.evalPath ? (
-                    <div>Eval set: {leaderboard.evalPath}</div>
+                  {leaderboard?.evalPath ? (
+                    <div>Eval set: {leaderboard?.evalPath}</div>
                   ) : null}
-                  {leaderboard.personaPath ? (
-                    <div>Persona spec: {leaderboard.personaPath}</div>
+                  {leaderboard?.personaPath ? (
+                    <div>Persona spec: {leaderboard?.personaPath}</div>
                   ) : null}
                 </div>
               ) : null}
@@ -1309,6 +1367,33 @@ export function RankingClient() {
           ) : (
             <div className="text-muted-foreground text-sm">
               No active prompt stored.
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+      <Dialog
+        open={isLeaderboardPromptOpen}
+        onOpenChange={(open) => {
+          setIsLeaderboardPromptOpen(open)
+          if (!open) {
+            setSelectedLeaderboardPrompt(null)
+          }
+        }}
+      >
+        <DialogContent className="bg-card text-card-foreground max-w-[calc(100%-2rem)] w-[95vw] text-sm sm:max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Prompt template</DialogTitle>
+            <DialogDescription>
+              Full prompt text for the selected leaderboard entry.
+            </DialogDescription>
+          </DialogHeader>
+          {selectedLeaderboardPrompt ? (
+            <div className="max-h-[60vh] overflow-y-auto rounded-lg border bg-muted/40 p-3 font-mono text-xs whitespace-pre-wrap">
+              {selectedLeaderboardPrompt.prompt}
+            </div>
+          ) : (
+            <div className="text-muted-foreground text-sm">
+              No prompt selected.
             </div>
           )}
         </DialogContent>

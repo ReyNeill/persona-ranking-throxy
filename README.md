@@ -27,10 +27,10 @@ You can also ingest + run directly from the UI (Ranking Controls section).
 
 ### Prompt optimization
 
-Use the evaluation set in `context/` to automatically improve the persona-to-query prompt. 
-This follows the "Automatic Prompt Optimization" approach (Cameron R. Wolfe) with a beam-search style loop, heuristic prompt mutations, 
-and a company-level train/test split to avoid leakage. We score candidates with ranking metrics (NDCG/MRR/precision/top1) and include 
-cost guardrails so runs stay within budget. The top prompts are stored in `prompt_leaderboards` and shown in the UI.
+Use the evaluation set in `context/` to automatically improve the persona-to-query prompt.
+This follows the "Automatic Prompt Optimization" (APO) approach from the reference article with a **beam search** loop, **prompt mutation operators**
+(heuristic mutations), and **LLM-generated candidate prompts** (meta-prompting). We use a **company-level train/test split** to avoid leakage and
+score candidates with **ranking metrics** (NDCG/MRR/precision/top1). The top prompts are stored in `prompt_leaderboards` and shown in the UI.
 
 ```bash
 bun run optimize:prompt -- --rounds 3 --candidates 4 --beam 3
@@ -68,7 +68,7 @@ Open `http://localhost:3000` to run ranking from the UI.
 
 ## Testing
 
-Run the unit test suite with Bun:
+Run the unit test suite with Bun (built-in test runner):
 
 ```bash
 bun run test
