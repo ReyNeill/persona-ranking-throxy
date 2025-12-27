@@ -46,7 +46,9 @@ import {
   PaginationNext,
   PaginationPrevious,
 } from "@/components/ui/pagination"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { toast } from "sonner"
+import { CircleHelp } from "lucide-react"
 
 const DEFAULT_PERSONA_SPECS = [
   `We sell a sales engagement platform.
@@ -95,6 +97,37 @@ type RankingStreamEvent =
   | { type: "complete"; runId: string; completed: number; total: number }
   | { type: "error"; message: string }
 
+type PromptLeaderboardEntry = {
+  prompt: string
+  score: number
+  trainMetrics: {
+    ndcg: number
+    mrr: number
+    precision: number
+    top1: number
+  }
+  testMetrics: {
+    ndcg: number
+    mrr: number
+    precision: number
+    top1: number
+  }
+  query: string
+  errorSummary: string
+}
+
+type PromptLeaderboard = {
+  objective: string | null
+  k: number | null
+  updatedAt: string | null
+  queryModelId?: string | null
+  optimizerModelId?: string | null
+  rerankModelId?: string | null
+  evalPath?: string | null
+  personaPath?: string | null
+  entries: PromptLeaderboardEntry[]
+}
+
 export function RankingClient() {
   const [personaSpec, setPersonaSpec] = React.useState(
     () => pickRandomPersonaSpec()
@@ -123,6 +156,14 @@ export function RankingClient() {
   const [isPromptLoading, setIsPromptLoading] = React.useState(false)
   const [promptError, setPromptError] = React.useState<string | null>(null)
   const [activePrompt, setActivePrompt] = React.useState<string | null>(null)
+  const [isLeaderboardDialogOpen, setIsLeaderboardDialogOpen] =
+    React.useState(false)
+  const [isLeaderboardLoading, setIsLeaderboardLoading] = React.useState(false)
+  const [leaderboardError, setLeaderboardError] = React.useState<string | null>(
+    null
+  )
+  const [leaderboard, setLeaderboard] =
+    React.useState<PromptLeaderboard | null>(null)
   const [progress, setProgress] = React.useState<{
     status: ProgressStatus
     percent: number
@@ -209,6 +250,39 @@ export function RankingClient() {
   }, [isPromptDialogOpen])
 
   React.useEffect(() => {
+    if (!isLeaderboardDialogOpen) return
+    let isMounted = true
+    setIsLeaderboardLoading(true)
+    setLeaderboardError(null)
+    fetch("/api/prompts/leaderboard")
+      .then(async (res) => {
+        const data = await res.json()
+        if (!res.ok) {
+          throw new Error(data?.error ?? "Failed to load leaderboard.")
+        }
+        return data as PromptLeaderboard
+      })
+      .then((data) => {
+        if (!isMounted) return
+        setLeaderboard(data)
+      })
+      .catch((err) => {
+        if (!isMounted) return
+        setLeaderboardError(
+          err instanceof Error ? err.message : "Failed to load."
+        )
+      })
+      .finally(() => {
+        if (!isMounted) return
+        setIsLeaderboardLoading(false)
+      })
+
+    return () => {
+      isMounted = false
+    }
+  }, [isLeaderboardDialogOpen])
+
+  React.useEffect(() => {
     setCompanyPagination((prev) => ({ ...prev, pageIndex: 0 }))
   }, [results?.runId])
 
@@ -231,6 +305,18 @@ export function RankingClient() {
     return new Intl.NumberFormat("en-US").format(value)
   }
 
+  function formatMetric(value: number | null | undefined) {
+    if (value === null || value === undefined || Number.isNaN(value)) return "—"
+    return value.toFixed(3)
+  }
+
+  function formatDateTime(value: string | null | undefined) {
+    if (!value) return "—"
+    const parsed = new Date(value)
+    if (Number.isNaN(parsed.getTime())) return "—"
+    return parsed.toLocaleString("en-US")
+  }
+
   function escapeCsv(value: string) {
     if (value.includes('"') || value.includes(",") || value.includes("\n")) {
       return `"${value.replace(/"/g, '""')}"`
@@ -241,6 +327,10 @@ export function RankingClient() {
   function exportSelectedToCsv() {
     if (!results?.companies?.length) return
 
+    const exportRows: Array<{
+      companyName: string
+      lead: RankingResponse["companies"][number]["leads"][number]
+    }> = []
     const rows: string[] = []
     rows.push(
       [
@@ -260,21 +350,37 @@ export function RankingClient() {
         (lead) => lead.rank !== null && lead.rank <= exportTopN
       )
       for (const lead of topLeads) {
-        rows.push(
-          [
-            company.companyName ?? "",
-            lead.fullName ?? "",
-            lead.title ?? "",
-            lead.email ?? "",
-            lead.linkedinUrl ?? "",
-            lead.score !== null ? lead.score.toFixed(2) : "",
-            lead.rank !== null ? String(lead.rank) : "",
-            lead.reason ?? "",
-          ]
-            .map((value) => escapeCsv(String(value)))
-            .join(",")
-        )
+        exportRows.push({
+          companyName: company.companyName ?? "",
+          lead,
+        })
       }
+    }
+
+    exportRows.sort((a, b) => {
+      const scoreDelta = (b.lead.score ?? -1) - (a.lead.score ?? -1)
+      if (scoreDelta !== 0) return scoreDelta
+      const companySort = a.companyName.localeCompare(b.companyName)
+      if (companySort !== 0) return companySort
+      return (a.lead.fullName ?? "").localeCompare(b.lead.fullName ?? "")
+    })
+
+    for (const row of exportRows) {
+      const lead = row.lead
+      rows.push(
+        [
+          row.companyName,
+          lead.fullName ?? "",
+          lead.title ?? "",
+          lead.email ?? "",
+          lead.linkedinUrl ?? "",
+          lead.score !== null ? lead.score.toFixed(2) : "",
+          lead.rank !== null ? String(lead.rank) : "",
+          lead.reason ?? "",
+        ]
+          .map((value) => escapeCsv(String(value)))
+          .join(",")
+      )
     }
 
     if (rows.length <= 1) return
@@ -584,7 +690,7 @@ export function RankingClient() {
                   alt="PRS logo"
                   width={96}
                   height={42}
-                  className="relative h-9 w-auto"
+                  className="relative h-9 w-auto dark:invert"
                   priority
                 />
               </div>
@@ -671,7 +777,24 @@ export function RankingClient() {
               />
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="min-score">Relevance threshold (0-1)</Label>
+              <Label htmlFor="min-score" className="flex items-center gap-2">
+                Relevance threshold (0-1)
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      aria-label="What does relevance threshold mean?"
+                      className="text-muted-foreground hover:text-foreground inline-flex h-5 w-5 items-center justify-center rounded-full border border-border"
+                    >
+                      <CircleHelp className="h-3.5 w-3.5" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="max-w-xs">
+                    Minimum rerank score required to mark a lead as relevant. Only
+                    relevant leads count toward Top N.
+                  </TooltipContent>
+                </Tooltip>
+              </Label>
               <Input
                 id="min-score"
                 type="number"
@@ -799,6 +922,13 @@ export function RankingClient() {
                 Run ID: {results.runId}
               </p>
             ) : null}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setIsLeaderboardDialogOpen(true)}
+            >
+              View prompt leaderboard
+            </Button>
             <Button
               variant="outline"
               size="sm"
@@ -1036,6 +1166,113 @@ export function RankingClient() {
               </div>
             </div>
           ) : null}
+        </DialogContent>
+      </Dialog>
+      <Dialog
+        open={isLeaderboardDialogOpen}
+        onOpenChange={(open) => {
+          setIsLeaderboardDialogOpen(open)
+          if (!open) {
+            setLeaderboardError(null)
+          }
+        }}
+      >
+        <DialogContent className="bg-card text-card-foreground max-w-[calc(100%-2rem)] w-[95vw] text-sm sm:max-w-5xl">
+          <DialogHeader>
+            <DialogTitle>Prompt leaderboard</DialogTitle>
+            <DialogDescription>
+              Top prompt templates from recent optimization runs.
+            </DialogDescription>
+          </DialogHeader>
+          {isLeaderboardLoading ? (
+            <div className="space-y-3">
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-[92%]" />
+              <Skeleton className="h-4 w-[88%]" />
+              <Skeleton className="h-4 w-[80%]" />
+            </div>
+          ) : leaderboardError ? (
+            <div className="text-destructive text-sm">{leaderboardError}</div>
+          ) : leaderboard?.entries?.length ? (
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center gap-3 text-muted-foreground text-xs">
+                <span>Objective: {leaderboard.objective ?? "—"}</span>
+                <span>K: {leaderboard.k ?? "—"}</span>
+                <span>Updated: {formatDateTime(leaderboard.updatedAt)}</span>
+              </div>
+              <div className="overflow-hidden rounded-2xl border">
+                <Table className="table-fixed text-xs [&_td]:align-top [&_td]:py-2">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-[6%] text-right">#</TableHead>
+                      <TableHead className="w-[12%] text-right">
+                        Objective
+                      </TableHead>
+                      <TableHead className="w-[9%] text-right">NDCG</TableHead>
+                      <TableHead className="w-[9%] text-right">MRR</TableHead>
+                      <TableHead className="w-[11%] text-right">
+                        Precision
+                      </TableHead>
+                      <TableHead className="w-[8%] text-right">
+                        Top1
+                      </TableHead>
+                      <TableHead className="w-[45%]">Prompt</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {leaderboard.entries.map((entry, index) => {
+                      const metrics = entry.testMetrics ?? entry.trainMetrics
+                      return (
+                        <TableRow key={`leader-${index}`}>
+                          <TableCell className="text-right">
+                            {index + 1}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {formatMetric(entry.score)}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {formatMetric(metrics.ndcg)}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {formatMetric(metrics.mrr)}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {formatMetric(metrics.precision)}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {formatMetric(metrics.top1)}
+                          </TableCell>
+                          <TableCell>
+                            <div
+                              className="line-clamp-2 text-muted-foreground"
+                              title={entry.prompt}
+                            >
+                              {entry.prompt}
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+              {leaderboard.evalPath || leaderboard.personaPath ? (
+                <div className="text-muted-foreground text-xs">
+                  {leaderboard.evalPath ? (
+                    <div>Eval set: {leaderboard.evalPath}</div>
+                  ) : null}
+                  {leaderboard.personaPath ? (
+                    <div>Persona spec: {leaderboard.personaPath}</div>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <div className="text-muted-foreground text-sm">
+              No leaderboard data yet. Run bun run optimize:prompt to generate a
+              leaderboard.
+            </div>
+          )}
         </DialogContent>
       </Dialog>
       <Dialog

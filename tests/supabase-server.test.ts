@@ -17,12 +17,8 @@ const originalEnv = { ...process.env }
 beforeEach(() => {
   lastCreateArgs = null
   process.env = { ...originalEnv }
-  delete process.env.SUPABASE_URL
   delete process.env.NEXT_PUBLIC_SUPABASE_URL
-  delete process.env.SUPABASE_SERVICE_ROLE_KEY
   delete process.env.SUPABASE_SERVICE_KEY
-  delete process.env.SUPABASE_KEY
-  delete process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
 })
 
 afterEach(() => {
@@ -32,13 +28,13 @@ afterEach(() => {
 describe("createSupabaseServerClient", () => {
   it("throws when required env vars are missing", () => {
     expect(() => createSupabaseServerClient()).toThrow(
-      "Missing SUPABASE_URL (or NEXT_PUBLIC_SUPABASE_URL) and SUPABASE_SERVICE_ROLE_KEY."
+      "Missing NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_KEY."
     )
   })
 
   it("creates a client when env vars are present", () => {
-    process.env.SUPABASE_URL = "https://example.supabase.co"
-    process.env.SUPABASE_SERVICE_ROLE_KEY = "service-key"
+    process.env.NEXT_PUBLIC_SUPABASE_URL = "https://example.supabase.co"
+    process.env.SUPABASE_SERVICE_KEY = "service-key"
 
     const client = createSupabaseServerClient() as any
 
@@ -59,12 +55,12 @@ describe("createSupabaseServerClientOptional", () => {
 
   it("returns a client when env vars are present", () => {
     process.env.NEXT_PUBLIC_SUPABASE_URL = "https://example.supabase.co"
-    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY = "publishable-key"
+    process.env.SUPABASE_SERVICE_KEY = "service-key"
 
     const client = createSupabaseServerClientOptional() as any
 
     expect(client).not.toBeNull()
     expect(client.url).toBe("https://example.supabase.co")
-    expect(client.key).toBe("publishable-key")
+    expect(client.key).toBe("service-key")
   })
 })

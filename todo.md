@@ -10,4 +10,6 @@
 - [x] throxy style appropiation lmao
 - [x] heuristics reason to not waste my money
 - [x] favicon
-- [ ] background job queue for large CSVs.
+- ? background job queue for large CSVs.
+
+# i've considered scalability, auth, improvements but will leave it as is for more straightforward task review

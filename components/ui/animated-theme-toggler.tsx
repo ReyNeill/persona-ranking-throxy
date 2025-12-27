@@ -23,6 +23,13 @@ export const AnimatedThemeToggler = ({
       setIsDark(document.documentElement.classList.contains("dark"))
     }
 
+    const storedTheme = localStorage.getItem("theme")
+    if (storedTheme === "dark") {
+      document.documentElement.classList.add("dark")
+    } else if (storedTheme === "light") {
+      document.documentElement.classList.remove("dark")
+    }
+
     updateTheme()
 
     const observer = new MutationObserver(updateTheme)

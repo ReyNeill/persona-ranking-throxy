@@ -4,6 +4,7 @@ import dotenv from "dotenv"
 import { parse } from "csv-parse/sync"
 import { generateText, rerank } from "ai"
 import { cohere } from "@ai-sdk/cohere"
+import { createClient } from "@supabase/supabase-js"
 
 import { getOpenRouterModel } from "@/lib/ai/openrouter"
 import {
@@ -38,6 +39,27 @@ type EvalMetrics = {
   mrr: number
   precision: number
   top1: number
+}
+
+type PromptLeaderboardEntry = {
+  prompt: string
+  score: number
+  trainMetrics: EvalMetrics
+  testMetrics: EvalMetrics
+  query: string
+  errorSummary: string
+}
+
+type PromptLeaderboard = {
+  objective: string
+  k: number
+  updatedAt: string
+  queryModelId: string
+  optimizerModelId: string
+  rerankModelId: string
+  evalPath: string
+  personaPath: string
+  entries: PromptLeaderboardEntry[]
 }
 
 type FailureExample = {
@@ -83,7 +105,6 @@ const trainRatioInput = Number.parseFloat(
   getArgValue("--train-ratio") ?? "0.8"
 )
 const seed = getArgNumber("--seed", Date.now()) ?? Date.now()
-const outputPath = getArgValue("--output")
 const objective =
   (getArgValue("--objective") ?? "precision").toLowerCase() ?? "precision"
 const budgetUsd = Number.parseFloat(getArgValue("--budget-usd") ?? "")
@@ -93,19 +114,12 @@ const debug = process.argv.includes("--debug")
 const includeEmployeeRange =
   process.argv.includes("--include-employee-range") ||
   process.env.INCLUDE_EMPLOYEE_RANGE === "true"
-const queryInputTokensOverride = getArgNumber("--query-input-tokens", null)
-const queryOutputTokensOverride = getArgNumber("--query-output-tokens", null)
-const optimizerInputTokensOverride = getArgNumber("--optimizer-input-tokens", null)
-const optimizerOutputTokensOverride = getArgNumber("--optimizer-output-tokens", null)
 
 const queryModelId =
   getArgValue("--query-model") ??
   process.env.OPENROUTER_MODEL ??
-  "openai/gpt-4o-mini"
-const optimizerModelId =
-  getArgValue("--optimizer-model") ??
-  process.env.PROMPT_OPTIMIZER_MODEL ??
-  queryModelId
+  "openai/gpt-oss-120b"
+const optimizerModelId = getArgValue("--optimizer-model") ?? queryModelId
 const rerankModelId = process.env.RERANK_MODEL ?? "rerank-v3.5"
 
 const DIRECT_PROMPT = "__DIRECT_PERSONA_SPEC__"
@@ -192,11 +206,6 @@ function mulberry32(seedValue: number) {
     result ^= result + Math.imul(result ^ (result >>> 7), result | 61)
     return ((result ^ (result >>> 14)) >>> 0) / 4294967296
   }
-}
-
-function estimateTokens(text: string) {
-  if (!text) return 0
-  return Math.max(1, Math.ceil(text.length / 4))
 }
 
 function sampleCompanies(companies: CompanyGroup[]) {
@@ -667,84 +676,17 @@ const totalDocuments = companies.reduce(
 const estimatedPromptEvaluations =
   2 + Math.max(0, rounds - 1) * (candidatesPerRound + mutationsPerRound)
 
-const cohereCostPerSearch = Number.parseFloat(
-  process.env.COHERE_RERANK_COST_PER_SEARCH ??
-    process.env.RERANK_COST_PER_SEARCH ??
-    ""
-)
 const cohereCostPer1kSearches = Number.parseFloat(
-  process.env.COHERE_RERANK_COST_PER_1K_SEARCHES ??
-    process.env.RERANK_COST_PER_1K_SEARCHES ??
-    ""
-)
-const cohereCostPer1kDocs = Number.parseFloat(
-  process.env.COHERE_RERANK_COST_PER_1K_DOCS ??
-    process.env.RERANK_COST_PER_1K_DOCS ??
-    ""
+  process.env.COHERE_RERANK_COST_PER_1K_SEARCHES ?? ""
 )
 
 let rerankCostPerPrompt = 0
-if (Number.isFinite(cohereCostPerSearch)) {
-  rerankCostPerPrompt = companies.length * cohereCostPerSearch
-} else if (Number.isFinite(cohereCostPer1kSearches)) {
+if (Number.isFinite(cohereCostPer1kSearches)) {
   rerankCostPerPrompt = (companies.length / 1000) * cohereCostPer1kSearches
-} else if (Number.isFinite(cohereCostPer1kDocs)) {
-  rerankCostPerPrompt = (totalDocuments / 1000) * cohereCostPer1kDocs
-}
-
-const queryCalls = Math.max(0, estimatedPromptEvaluations - 1)
-const optimizerCalls = Math.max(0, rounds - 1)
-
-const defaultQueryPrompt = renderPersonaQueryPrompt(
-  DEFAULT_PERSONA_QUERY_PROMPT,
-  personaSpec
-)
-const estimatedQueryInputTokens =
-  queryInputTokensOverride ?? estimateTokens(defaultQueryPrompt)
-const estimatedQueryOutputTokens = queryOutputTokensOverride ?? 120
-const estimatedOptimizerInputTokens =
-  optimizerInputTokensOverride ?? 900
-const estimatedOptimizerOutputTokens =
-  optimizerOutputTokensOverride ?? 240
-
-const openrouterInputRate = Number.parseFloat(
-  process.env.OPENROUTER_COST_PER_1K_INPUT ??
-    process.env.AI_COST_PER_1K_INPUT ??
-    ""
-)
-const openrouterOutputRate = Number.parseFloat(
-  process.env.OPENROUTER_COST_PER_1K_OUTPUT ??
-    process.env.AI_COST_PER_1K_OUTPUT ??
-    ""
-)
-const openrouterTotalRate = Number.parseFloat(
-  process.env.OPENROUTER_COST_PER_1K_TOKENS ??
-    process.env.AI_COST_PER_1K_TOKENS ??
-    ""
-)
-
-let openrouterQueryCost = 0
-let openrouterOptimizerCost = 0
-if (Number.isFinite(openrouterInputRate) || Number.isFinite(openrouterOutputRate)) {
-  openrouterQueryCost =
-    (estimatedQueryInputTokens / 1000) * (openrouterInputRate || 0) +
-    (estimatedQueryOutputTokens / 1000) * (openrouterOutputRate || 0)
-  openrouterOptimizerCost =
-    (estimatedOptimizerInputTokens / 1000) * (openrouterInputRate || 0) +
-    (estimatedOptimizerOutputTokens / 1000) * (openrouterOutputRate || 0)
-} else if (Number.isFinite(openrouterTotalRate)) {
-  openrouterQueryCost =
-    ((estimatedQueryInputTokens + estimatedQueryOutputTokens) / 1000) *
-    openrouterTotalRate
-  openrouterOptimizerCost =
-    ((estimatedOptimizerInputTokens + estimatedOptimizerOutputTokens) / 1000) *
-    openrouterTotalRate
 }
 
 const estimatedRerankCost = rerankCostPerPrompt * estimatedPromptEvaluations
-const estimatedOpenrouterCost =
-  openrouterQueryCost * queryCalls + openrouterOptimizerCost * optimizerCalls
-const estimatedTotalCost = estimatedRerankCost + estimatedOpenrouterCost
+const estimatedTotalCost = estimatedRerankCost
 
 console.log(
   `Loaded ${allCompanies.length} companies (evaluating ${companies.length}).`
@@ -759,13 +701,13 @@ console.log(
   `Estimated evaluations: ${estimatedPromptEvaluations} prompts | ${companies.length} companies | ${totalDocuments} total documents`
 )
 
-if (rerankCostPerPrompt > 0 || openrouterQueryCost > 0 || openrouterOptimizerCost > 0) {
+if (rerankCostPerPrompt > 0) {
   console.log(
-    `Estimated costs: rerank $${estimatedRerankCost.toFixed(2)} + OpenRouter $${estimatedOpenrouterCost.toFixed(2)} = $${estimatedTotalCost.toFixed(2)}`
+    `Estimated rerank cost: $${estimatedRerankCost.toFixed(2)} (OpenRouter not estimated)`
   )
 } else {
   console.log(
-    "Estimated costs: set COHERE_RERANK_COST_PER_SEARCH / COHERE_RERANK_COST_PER_1K_DOCS and OPENROUTER_COST_PER_1K_* to estimate."
+    "Estimated costs: set COHERE_RERANK_COST_PER_1K_SEARCHES to estimate rerank spend."
   )
 }
 
@@ -928,7 +870,48 @@ if (directBaseline) {
   console.log(directBaseline.query)
 }
 
-if (outputPath) {
-  fs.writeFileSync(outputPath, best.prompt)
-  console.log(`\nSaved best prompt to ${outputPath}`)
+const leaderboardEntries: PromptLeaderboardEntry[] = finalScored
+  .slice(0, 20)
+  .map((evaluation) => ({
+    prompt: evaluation.prompt,
+    score: scoreObjective(evaluation.testMetrics),
+    trainMetrics: evaluation.trainMetrics,
+    testMetrics: evaluation.testMetrics,
+    query: evaluation.query,
+    errorSummary: evaluation.errorSummary,
+  }))
+
+const leaderboard: PromptLeaderboard = {
+  objective,
+  k: metricK,
+  updatedAt: new Date().toISOString(),
+  queryModelId,
+  optimizerModelId,
+  rerankModelId,
+  evalPath,
+  personaPath,
+  entries: leaderboardEntries,
+}
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+const serviceRoleKey = process.env.SUPABASE_SERVICE_KEY
+
+if (supabaseUrl && serviceRoleKey) {
+  const supabase = createClient(supabaseUrl, serviceRoleKey, {
+    auth: { persistSession: false },
+  })
+  const { error } = await supabase.from("prompt_leaderboards").upsert({
+    id: "active",
+    data: leaderboard,
+    updated_at: new Date().toISOString(),
+  })
+  if (error) {
+    console.warn("Unable to write prompt leaderboard to Supabase:", error.message)
+  } else {
+    console.log("\nSaved prompt leaderboard to Supabase.")
+  }
+} else {
+  console.warn(
+    "Skipping prompt leaderboard write (missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_KEY)."
+  )
 }

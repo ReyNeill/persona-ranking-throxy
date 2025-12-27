@@ -130,37 +130,9 @@ type PersonaQueryResult = {
 
 const DEFAULT_RERANK_MODEL = process.env.RERANK_MODEL ?? "rerank-v3.5"
 const DEFAULT_OPENROUTER_MODEL =
-  process.env.OPENROUTER_MODEL ?? "openai/gpt-4o-mini"
-const OPENROUTER_INPUT_COST = Number.parseFloat(
-  process.env.OPENROUTER_COST_PER_1K_INPUT ??
-    process.env.AI_COST_PER_1K_INPUT ??
-    ""
-)
-const OPENROUTER_OUTPUT_COST = Number.parseFloat(
-  process.env.OPENROUTER_COST_PER_1K_OUTPUT ??
-    process.env.AI_COST_PER_1K_OUTPUT ??
-    ""
-)
-const OPENROUTER_TOTAL_COST = Number.parseFloat(
-  process.env.OPENROUTER_COST_PER_1K_TOKENS ??
-    process.env.AI_COST_PER_1K_TOKENS ??
-    ""
-)
-const RERANK_COST_PER_SEARCH = Number.parseFloat(
-  process.env.COHERE_RERANK_COST_PER_SEARCH ??
-    process.env.RERANK_COST_PER_SEARCH ??
-    ""
-)
+  process.env.OPENROUTER_MODEL ?? "openai/gpt-oss-120b"
 const RERANK_COST_PER_1K_SEARCHES = Number.parseFloat(
-  process.env.COHERE_RERANK_COST_PER_1K_SEARCHES ??
-    process.env.RERANK_COST_PER_1K_SEARCHES ??
-    ""
-)
-const RERANK_COST_PER_1K_DOCS = Number.parseFloat(
-  process.env.COHERE_RERANK_COST_PER_1K_DOCS ??
-    process.env.RERANK_COST_PER_1K_DOCS ??
-    process.env.AI_COST_RERANK_PER_1K_DOCS ??
-    ""
+  process.env.COHERE_RERANK_COST_PER_1K_SEARCHES ?? ""
 )
 
 function formatLeadText(lead: LeadRow) {
@@ -307,42 +279,14 @@ function buildHeuristicReason({
   return "Below relevance threshold for this persona."
 }
 
-function normalizeRate(value: number) {
-  return Number.isFinite(value) ? value : null
-}
-
-const openrouterInputRate = normalizeRate(OPENROUTER_INPUT_COST)
-const openrouterOutputRate = normalizeRate(OPENROUTER_OUTPUT_COST)
-const openrouterTotalRate = normalizeRate(OPENROUTER_TOTAL_COST)
-const rerankSearchRate = normalizeRate(RERANK_COST_PER_SEARCH)
-const rerankSearchRatePer1k = normalizeRate(RERANK_COST_PER_1K_SEARCHES)
-const rerankDocRate = normalizeRate(RERANK_COST_PER_1K_DOCS)
-
 function computeGenerationCost(usage?: LanguageModelUsage) {
   if (!usage) return null
-  const inputTokens = usage.inputTokens ?? 0
-  const outputTokens = usage.outputTokens ?? 0
-  const totalTokens = usage.totalTokens ?? inputTokens + outputTokens
-
-  if (openrouterInputRate !== null || openrouterOutputRate !== null) {
-    return (
-      (inputTokens / 1000) * (openrouterInputRate ?? 0) +
-      (outputTokens / 1000) * (openrouterOutputRate ?? 0)
-    )
-  }
-
-  if (openrouterTotalRate !== null) {
-    return (totalTokens / 1000) * openrouterTotalRate
-  }
-
   return null
 }
 
-function computeRerankCost(documentsCount: number) {
-  if (rerankSearchRate !== null) return rerankSearchRate
-  if (rerankSearchRatePer1k !== null) return rerankSearchRatePer1k / 1000
-  if (rerankDocRate === null) return null
-  return (documentsCount / 1000) * rerankDocRate
+function computeRerankCost() {
+  if (!Number.isFinite(RERANK_COST_PER_1K_SEARCHES)) return null
+  return RERANK_COST_PER_1K_SEARCHES / 1000
 }
 
 async function wrapWithDevtools(model: ReturnType<typeof getOpenRouterModel>) {
@@ -605,7 +549,7 @@ export async function runRanking({
       model: rerankResult.response?.modelId ?? DEFAULT_RERANK_MODEL,
       operation: "rerank",
       documents_count: documents.length,
-      cost_usd: computeRerankCost(documents.length),
+      cost_usd: computeRerankCost(),
       metadata: {
         companyId,
         companyName: companyLeads[0]?.company.name ?? null,

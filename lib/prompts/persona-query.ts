@@ -10,10 +10,6 @@ export const DEFAULT_PERSONA_QUERY_PROMPT = [
 ].join("\n")
 
 export function getPersonaQueryPromptTemplate() {
-  const fromEnv = process.env.PERSONA_QUERY_PROMPT
-  if (fromEnv && fromEnv.trim().length > 0) {
-    return fromEnv.trim()
-  }
   return DEFAULT_PERSONA_QUERY_PROMPT
 }
 
