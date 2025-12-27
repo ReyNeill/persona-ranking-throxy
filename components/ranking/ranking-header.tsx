@@ -10,10 +10,6 @@ export function RankingHeader() {
         <div className="space-y-2">
           <div className="flex items-center gap-3">
             <div className="relative">
-              <span
-                aria-hidden
-                className="pointer-events-none absolute -inset-8 hidden rounded-full bg-[radial-gradient(circle,rgba(248,244,240,0.55),rgba(248,244,240,0)_72%)] blur-3xl dark:block"
-              />
               <Image
                 src="/throxy-logo.avif"
                 alt="PRS logo"
@@ -40,4 +36,3 @@ export function RankingHeader() {
     </section>
   )
 }
-

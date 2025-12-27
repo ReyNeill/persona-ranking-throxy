@@ -40,6 +40,12 @@ type RankingTableProps = {
   paginationDocked?: boolean
 }
 
+function normalizeExternalUrl(value: string) {
+  const trimmed = value.trim()
+  if (!trimmed) return null
+  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`
+}
+
 const scoreSort: SortingFn<LeadResult> = (rowA, rowB) => {
   const a = rowA.original.score ?? -1
   const b = rowB.original.score ?? -1
@@ -96,13 +102,61 @@ export function RankingTable({
         header: "Lead",
         cell: ({ row }) => {
           const lead = row.original
+          const email = lead.email?.trim() || null
+          const linkedinUrl = lead.linkedinUrl
+            ? normalizeExternalUrl(lead.linkedinUrl)
+            : null
+          const contactLinks = [
+            email
+              ? { label: email, href: `mailto:${email}` }
+              : null,
+            linkedinUrl
+              ? { label: "LinkedIn profile", href: linkedinUrl }
+              : null,
+          ].filter(Boolean) as Array<{ label: string; href: string }>
+          const primaryHref = linkedinUrl ?? (email ? `mailto:${email}` : null)
           return (
             <div className="min-w-0 space-y-1">
-              <div className="font-medium line-clamp-1">
-                {lead.fullName ?? "Unknown"}
-              </div>
+              {primaryHref ? (
+                <a
+                  href={primaryHref}
+                  target={linkedinUrl ? "_blank" : undefined}
+                  rel={linkedinUrl ? "noreferrer" : undefined}
+                  className="font-medium line-clamp-1 hover:underline"
+                >
+                  {lead.fullName ?? "Unknown"}
+                </a>
+              ) : (
+                <div className="font-medium line-clamp-1">
+                  {lead.fullName ?? "Unknown"}
+                </div>
+              )}
               <div className="text-muted-foreground text-xs line-clamp-1">
-                {lead.email ?? lead.linkedinUrl ?? "No contact"}
+                {contactLinks.length ? (
+                  contactLinks.map((contact, index) => (
+                    <React.Fragment key={contact.href}>
+                      {index > 0 ? (
+                        <span className="px-1 text-muted-foreground">•</span>
+                      ) : null}
+                      <a
+                        href={contact.href}
+                        target={
+                          contact.href.startsWith("http") ? "_blank" : undefined
+                        }
+                        rel={
+                          contact.href.startsWith("http")
+                            ? "noreferrer"
+                            : undefined
+                        }
+                        className="hover:underline"
+                      >
+                        {contact.label}
+                      </a>
+                    </React.Fragment>
+                  ))
+                ) : (
+                  "No contact"
+                )}
               </div>
             </div>
           )

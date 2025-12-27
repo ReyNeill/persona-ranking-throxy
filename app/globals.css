@@ -81,9 +81,9 @@
   --chart-3: #fb651e;
   --chart-4: #352d33;
   --chart-5: #241f23;
-  --ranking-toast-bg: var(--secondary);
-  --ranking-toast-text: var(--secondary-foreground);
-  --ranking-toast-border: var(--secondary);
+  --ranking-toast-bg: var(--primary);
+  --ranking-toast-text: var(--primary-foreground);
+  --ranking-toast-border: var(--primary);
   --radius: 0rem;
   --sidebar: #ffffff;
   --sidebar-foreground: #241f23;
