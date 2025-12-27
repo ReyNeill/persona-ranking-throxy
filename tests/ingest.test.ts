@@ -2,13 +2,37 @@ import { describe, expect, it } from "bun:test"
 
 import { ingestCsvText } from "../lib/ingest"
 
+type SupabaseQueryResult<T> = {
+  data: T
+  error: null
+}
+
+type SupabaseInsertBuilder = {
+  select: () => {
+    single: () => Promise<SupabaseQueryResult<Record<string, unknown>>>
+  }
+}
+
+type SupabaseUpsertBuilder = {
+  select: () => {
+    single: () => Promise<SupabaseQueryResult<Record<string, unknown>>>
+  }
+}
+
+type SupabaseBatchInsert = Promise<{ error: null }>
+
+type SupabaseTableHandler =
+  | { insert: (payload: Record<string, unknown>) => SupabaseInsertBuilder }
+  | { upsert: (payload: Record<string, unknown>, options: { onConflict: string }) => SupabaseUpsertBuilder }
+  | { insert: (payload: Array<Record<string, unknown>>) => SupabaseBatchInsert }
+
 type SupabaseStub = {
   calls: {
     ingestions: Array<Record<string, unknown>>
     companyUpserts: Array<Record<string, unknown>>
     leadInserts: Array<Record<string, unknown>>
   }
-  from: (table: string) => any
+  from: (table: string) => SupabaseTableHandler
 }
 
 function createSupabaseStub(): SupabaseStub {
@@ -89,7 +113,7 @@ describe("ingestCsvText", () => {
     const supabase = createSupabaseStub()
 
     const result = await ingestCsvText({
-      supabase: supabase as any,
+      supabase: supabase as unknown as Parameters<typeof ingestCsvText>[0]["supabase"],
       csvText,
       filename: "leads.csv",
     })

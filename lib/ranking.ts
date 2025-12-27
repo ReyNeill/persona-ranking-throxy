@@ -8,6 +8,10 @@ import { cohere } from "@ai-sdk/cohere"
 
 import { getOpenRouterModel } from "@/lib/ai/openrouter"
 import {
+  AI_MODELS,
+  COST_CONFIG,
+} from "@/lib/constants"
+import {
   getPersonaQueryPromptTemplate,
   renderPersonaQueryPrompt,
 } from "@/lib/prompts/persona-query"
@@ -66,6 +70,8 @@ type RankingRunInput = {
 
 type RankingRunOptions = {
   onProgress?: (event: RankingProgressEvent) => void | Promise<void>
+  /** AbortSignal to cancel the ranking operation early */
+  signal?: AbortSignal
 }
 
 type RankedLead = {
@@ -128,12 +134,8 @@ type PersonaQueryResult = {
   metadata?: Record<string, unknown> | null
 }
 
-const DEFAULT_RERANK_MODEL = process.env.RERANK_MODEL ?? "rerank-v3.5"
-const DEFAULT_OPENROUTER_MODEL =
-  process.env.OPENROUTER_MODEL ?? "openai/gpt-oss-120b"
-const RERANK_COST_PER_1K_SEARCHES = Number.parseFloat(
-  process.env.COHERE_RERANK_COST_PER_1K_SEARCHES ?? ""
-)
+const DEFAULT_RERANK_MODEL = AI_MODELS.RERANK
+const DEFAULT_OPENROUTER_MODEL = AI_MODELS.OPENROUTER
 
 function formatLeadText(lead: LeadRow) {
   const employeeRange =
@@ -279,35 +281,67 @@ function buildHeuristicReason({
   return "Below relevance threshold for this persona."
 }
 
-function computeGenerationCost(usage?: LanguageModelUsage) {
+function computeGenerationCost(usage?: LanguageModelUsage): number | null {
   if (!usage) return null
-  return null
+
+  const inputCost = COST_CONFIG.OPENROUTER_INPUT_PER_M
+  const outputCost = COST_CONFIG.OPENROUTER_OUTPUT_PER_M
+
+  if (!Number.isFinite(inputCost) || !Number.isFinite(outputCost)) return null
+
+  // AI SDK v6 uses inputTokens/outputTokens
+  const inputTokens = usage.inputTokens ?? 0
+  const outputTokens = usage.outputTokens ?? 0
+
+  return (inputTokens * inputCost + outputTokens * outputCost) / 1_000_000
 }
 
-function computeRerankCost() {
-  if (!Number.isFinite(RERANK_COST_PER_1K_SEARCHES)) return null
-  return RERANK_COST_PER_1K_SEARCHES / 1000
+function computeRerankCost(): number | null {
+  const costPer1k = COST_CONFIG.COHERE_RERANK_PER_1K
+  if (!Number.isFinite(costPer1k)) return null
+  return costPer1k / 1000
 }
 
-async function wrapWithDevtools(model: ReturnType<typeof getOpenRouterModel>) {
+// Type for the model returned by generateText
+type GenerateTextModel = Parameters<typeof generateText>[0]["model"]
+
+async function wrapWithDevtools(
+  model: ReturnType<typeof getOpenRouterModel>
+): Promise<GenerateTextModel | null> {
   if (!model) return null
-  if (process.env.NODE_ENV === "production") return model
-  if (process.env.AI_DEVTOOLS !== "true") return model
+
+  // Cast to the type expected by generateText - OpenRouter SDK types don't fully
+  // match AI SDK v6 yet but the runtime implementation is compatible
+  const typedModel = model as unknown as GenerateTextModel
+
+  if (process.env.NODE_ENV === "production") return typedModel
+  if (process.env.AI_DEVTOOLS !== "true") return typedModel
 
   const specVersion = (model as { specificationVersion?: string })
     .specificationVersion
   if (specVersion !== "v3") {
-    return model
+    return typedModel
   }
 
   try {
     const { devToolsMiddleware } = await import("@ai-sdk/devtools")
-    return wrapLanguageModel({
-      model: model as any,
+    // wrapLanguageModel returns a compatible type - cast through unknown
+    // since OpenRouter SDK spec version differs from what AI SDK v6 expects
+    const wrapped = wrapLanguageModel({
+      model: model as unknown as Parameters<typeof wrapLanguageModel>[0]["model"],
       middleware: devToolsMiddleware(),
     })
+    return wrapped as GenerateTextModel
   } catch {
-    return model
+    return typedModel
+  }
+}
+
+type OpenRouterUsageMetadata = {
+  openrouter?: {
+    usage?: {
+      cost?: number
+    }
   }
 }
 
@@ -322,16 +356,19 @@ async function buildPersonaQuery(
 
   try {
     const wrappedModel = await wrapWithDevtools(model)
+    if (!wrappedModel) return { query: personaSpec }
+
     const prompt = renderPersonaQueryPrompt(promptTemplate, personaSpec)
     const result = await generateText({
-      // OpenRouter SDK model types don't match AI SDK language model typings yet.
-      model: wrappedModel as any,
+      model: wrappedModel,
       prompt,
     })
 
     const cleaned = result.text.trim()
-    const openrouterUsage =
-      (result.providerMetadata as any)?.openrouter?.usage ?? null
+    const providerMeta = result.providerMetadata as
+      | OpenRouterUsageMetadata
+      | undefined
+    const openrouterUsage = providerMeta?.openrouter?.usage ?? null
     const costUsd =
       typeof openrouterUsage?.cost === "number"
         ? openrouterUsage.cost
@@ -344,14 +381,23 @@ async function buildPersonaQuery(
       costUsd,
       metadata: openrouterUsage ? { openrouterUsage } : null,
     }
-  } catch {
+  } catch (error) {
+    // Fail gracefully - if query generation fails, use raw persona spec
+    console.warn(
+      "Failed to generate persona query, using raw spec:",
+      error instanceof Error ? error.message : "Unknown error"
+    )
     return { query: personaSpec }
   }
 }
 
+/**
+ * Fetch the active optimized prompt from the database.
+ * Returns null if not found or on error (fails gracefully).
+ */
 async function getActivePersonaQueryPrompt(
   supabase: ReturnType<typeof createSupabaseServerClient>
-) {
+): Promise<string | null> {
   try {
     const { data, error } = await supabase
       .from("prompt_settings")
@@ -359,9 +405,17 @@ async function getActivePersonaQueryPrompt(
       .eq("id", "active")
       .single()
 
-    if (error) return null
+    if (error) {
+      // Expected when no prompt is configured yet
+      return null
+    }
     return data?.persona_query_prompt ?? null
-  } catch {
+  } catch (error) {
+    // Fail gracefully - use default prompt if database lookup fails
+    console.warn(
+      "Failed to fetch active prompt, using default:",
+      error instanceof Error ? error.message : "Unknown error"
+    )
     return null
   }
 }
@@ -412,6 +466,14 @@ async function recordAiCall(
   }
 }
 
+function checkAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    const error = new Error("Ranking operation was aborted")
+    error.name = "AbortError"
+    throw error
+  }
+}
+
 export async function runRanking({
   personaSpec,
   topN,
@@ -420,7 +482,10 @@ export async function runRanking({
 }: RankingRunInput, options?: RankingRunOptions) {
   const supabase = createSupabaseServerClient()
   const notifyProgress = options?.onProgress
+  const signal = options?.signal
+
   const emit = async (event: RankingProgressEvent) => {
+    if (signal?.aborted) return
     if (notifyProgress) {
       await notifyProgress(event)
     }
@@ -523,7 +588,13 @@ export async function runRanking({
   const companyResults: CompanyResults[] = []
   let completedCompanies = 0
 
+  // Check for abort before starting the main ranking loop
+  checkAborted(signal)
+
   for (const [companyId, companyLeads] of grouped.entries()) {
+    // Check for abort at the start of each company iteration
+    checkAborted(signal)
+
     const companyName = companyLeads[0]?.company.name ?? "Unknown"
     await emit({
       type: "company_start",
@@ -657,13 +728,25 @@ export async function runRanking({
   }
 }
 
+type RankingRunRow = {
+  id: string
+  created_at: string
+  top_n: number
+  min_score: number
+  persona_id: string
+  ingestion_id: string | null
+  status: string
+  model: string | null
+  provider: string | null
+}
+
 export async function getRankingResults(runId?: string | null) {
   const supabase = createSupabaseServerClientOptional()
   if (!supabase) {
     return null
   }
 
-  let run: any = null
+  let run: RankingRunRow | null = null
   if (runId) {
     const { data, error } = await supabase
       .from("ranking_runs")
@@ -674,7 +757,7 @@ export async function getRankingResults(runId?: string | null) {
     if (error) {
       throw new Error(error.message)
     }
-    run = data
+    run = data as RankingRunRow
   } else {
     const { data, error } = await supabase
       .from("ranking_runs")
@@ -686,7 +769,11 @@ export async function getRankingResults(runId?: string | null) {
     if (error) {
       return null
     }
-    run = data
+    run = data as RankingRunRow
+  }
+
+  if (!run) {
+    return null
   }
 
   const { data: rows, error: rowsError } = await supabase

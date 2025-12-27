@@ -2,8 +2,14 @@ import { beforeEach, describe, expect, it } from "bun:test"
 
 import { handleRankStreamRequest } from "../app/api/rank/stream/route"
 
-let runRankingImpl: ((input: any, options?: any) => Promise<any>) | null = null
-let lastRunRankingInput: any = null
+import type { runRanking } from "../lib/ranking"
+
+type RunRankingFn = typeof runRanking
+type RankingInput = Parameters<RunRankingFn>[0]
+type RankingResult = Awaited<ReturnType<RunRankingFn>>
+
+let runRankingImpl: RunRankingFn | null = null
+let lastRunRankingInput: RankingInput | null = null
 
 const baseRankingResult = {
   runId: "ignored",
@@ -38,11 +44,11 @@ describe("/api/rank/stream", () => {
   })
 
   it("streams progress events and clamps inputs", async () => {
-    runRankingImpl = async (input, options) => {
+    runRankingImpl = async (input, options): Promise<RankingResult> => {
       lastRunRankingInput = input
       await options?.onProgress?.({ type: "start", runId: "run-1", totalCompanies: 2 })
       await options?.onProgress?.({ type: "complete", runId: "run-1", completed: 2, total: 2 })
-      return { ...baseRankingResult, runId: "run-1" }
+      return { ...baseRankingResult, runId: "run-1", companies: [] }
     }
 
     const request = new Request("http://localhost/api/rank/stream", {
@@ -77,7 +83,7 @@ describe("/api/rank/stream", () => {
   })
 
   it("streams error events when ranking fails", async () => {
-    runRankingImpl = async () => {
+    runRankingImpl = async (): Promise<RankingResult> => {
       throw new Error("boom")
     }
 

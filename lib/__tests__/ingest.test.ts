@@ -110,7 +110,7 @@ describe("ingestCsvText", () => {
     const supabase = createSupabaseStub()
 
     const result = await ingestCsvText({
-      supabase: supabase as any,
+      supabase: supabase as unknown as Parameters<typeof ingestCsvText>[0]["supabase"],
       csvText,
       filename: "leads.csv",
       source: "csv",
@@ -137,7 +137,7 @@ describe("ingestCsvText", () => {
 
     await expect(
       ingestCsvText({
-        supabase: supabase as any,
+        supabase: supabase as unknown as Parameters<typeof ingestCsvText>[0]["supabase"],
         csvText: "company\nAcme",
       })
     ).rejects.toThrow("nope")

@@ -15,6 +15,32 @@ type Lead = {
   ingestion_id?: string | null
 }
 
+type GenerateTextOptions = {
+  model: unknown
+  prompt: string
+}
+
+type GenerateTextResult = {
+  text: string
+  usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number }
+  providerMetadata?: Record<string, unknown>
+  response?: { modelId?: string }
+}
+
+type RerankOptions = {
+  model: unknown
+  query: string
+  documents: string[]
+}
+
+type RerankResult = {
+  ranking: Array<{ originalIndex: number; score: number }>
+  response?: { modelId?: string }
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Supabase mock requires flexible return types
+type SupabaseTableHandler = any
+
 type SupabaseRankingStub = {
   calls: {
     personas: Array<Record<string, unknown>>
@@ -23,13 +49,13 @@ type SupabaseRankingStub = {
     leadRankings: Array<Record<string, unknown>>
     updates: Array<Record<string, unknown>>
   }
-  from: (table: string) => any
+  from: (table: string) => SupabaseTableHandler
 }
 
 let supabaseStub: SupabaseRankingStub | null = null
 let openrouterModel: Record<string, unknown> | null = null
-let generateTextImpl: ((options: any) => Promise<any>) | null = null
-let rerankImpl: ((options: any) => Promise<any>) | null = null
+let generateTextImpl: ((options: GenerateTextOptions) => Promise<GenerateTextResult>) | null = null
+let rerankImpl: ((options: RerankOptions) => Promise<RerankResult | undefined>) | null = null
 
 mock.module("@/lib/supabase/server", () => ({
   createSupabaseServerClient: () => {
@@ -50,15 +76,15 @@ mock.module("@ai-sdk/cohere", () => ({
 }))
 
 mock.module("ai", () => ({
-  generateText: async (options: any) => {
+  generateText: async (options: GenerateTextOptions) => {
     if (!generateTextImpl) throw new Error("generateText not configured")
     return generateTextImpl(options)
   },
-  rerank: async (options: any) => {
+  rerank: async (options: RerankOptions) => {
     if (!rerankImpl) throw new Error("rerank not configured")
     return rerankImpl(options)
   },
-  wrapLanguageModel: ({ model }: { model: any }) => model,
+  wrapLanguageModel: ({ model }: { model: unknown }) => model,
 }))
 
 process.env.AI_DEVTOOLS = "false"
@@ -130,13 +156,21 @@ function createSupabaseStub({
       }
 
       if (table === "leads") {
-        const query: any = {
+        type LeadsQueryChain = {
+          select: () => LeadsQueryChain
+          eq: (column: string, value: string) => Promise<{ data: Lead[]; error: null }>
+          then: <T>(
+            resolve: (value: { data: Lead[]; error: null }) => T,
+            reject: (error: unknown) => T
+          ) => Promise<T>
+        }
+        const query: LeadsQueryChain = {
           select: () => query,
-          eq: async (column: string, value: string) => ({
+          eq: async (_column: string, value: string) => ({
             data: leads.filter((lead) => lead.ingestion_id === value),
             error: null,
           }),
-          then: (resolve: any, reject: any) =>
+          then: (resolve, reject) =>
             Promise.resolve({ data: leads, error: null }).then(resolve, reject),
         }
         return query

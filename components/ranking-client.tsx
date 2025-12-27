@@ -298,6 +298,7 @@ export function RankingClient() {
     if (updated && updated !== selectedCompany) {
       setSelectedCompany(updated)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally excluding selectedCompany to avoid infinite loop
   }, [results?.companies, selectedCompany?.companyId])
 
   function formatCredits(value: number | null) {

@@ -2,10 +2,17 @@ import { beforeEach, describe, expect, it } from "bun:test"
 
 import { handleRankRequest } from "../app/api/rank/route"
 import { handleResultsRequest } from "../app/api/results/route"
+import type { runRanking, getRankingResults } from "../lib/ranking"
 
-let runRankingImpl: ((input: any) => Promise<any>) | null = null
-let getRankingResultsImpl: ((runId?: string | null) => Promise<any>) | null = null
-let lastRunRankingInput: any = null
+type RunRankingFn = typeof runRanking
+type GetRankingResultsFn = typeof getRankingResults
+type RankingInput = Parameters<RunRankingFn>[0]
+type RankingResult = Awaited<ReturnType<RunRankingFn>>
+type ResultsData = Awaited<ReturnType<GetRankingResultsFn>>
+
+let runRankingImpl: RunRankingFn | null = null
+let getRankingResultsImpl: GetRankingResultsFn | null = null
+let lastRunRankingInput: RankingInput | null = null
 
 const baseRankingResult = {
   runId: "ignored",
@@ -56,7 +63,7 @@ describe("/api/rank", () => {
   })
 
   it("runs ranking with clamped values", async () => {
-    runRankingImpl = async () => ({ ...baseRankingResult, runId: "run-1" })
+    runRankingImpl = async (): Promise<RankingResult> => ({ ...baseRankingResult, runId: "run-1", companies: [] })
 
     const request = new Request("http://localhost/api/rank", {
       method: "POST",
@@ -91,7 +98,7 @@ describe("/api/rank", () => {
   })
 
   it("returns 500 on ranking errors", async () => {
-    runRankingImpl = async () => {
+    runRankingImpl = async (): Promise<RankingResult> => {
       throw new Error("boom")
     }
 
@@ -115,7 +122,7 @@ describe("/api/rank", () => {
 
 describe("/api/results", () => {
   it("returns empty payload when no results are available", async () => {
-    getRankingResultsImpl = async () => null
+    getRankingResultsImpl = async (): Promise<ResultsData> => null
 
     const request = new Request("http://localhost/api/results", {
       method: "GET",
@@ -136,8 +143,8 @@ describe("/api/results", () => {
   })
 
   it("returns ranking results from the service", async () => {
-    getRankingResultsImpl = async (runId) => ({
-      runId,
+    getRankingResultsImpl = async (runId): Promise<ResultsData> => ({
+      runId: runId ?? "run-1",
       createdAt: "2025-12-26T00:00:00Z",
       topN: 2,
       minScore: 0.4,
@@ -168,7 +175,7 @@ describe("/api/results", () => {
   })
 
   it("returns 500 on result errors", async () => {
-    getRankingResultsImpl = async () => {
+    getRankingResultsImpl = async (): Promise<ResultsData> => {
       throw new Error("failed")
     }
 

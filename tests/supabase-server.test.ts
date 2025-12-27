@@ -36,7 +36,10 @@ describe("createSupabaseServerClient", () => {
     process.env.NEXT_PUBLIC_SUPABASE_URL = "https://example.supabase.co"
     process.env.SUPABASE_SERVICE_KEY = "service-key"
 
-    const client = createSupabaseServerClient() as any
+    const client = createSupabaseServerClient() as unknown as {
+      url: string
+      key: string
+    }
 
     expect(client.url).toBe("https://example.supabase.co")
     expect(client.key).toBe("service-key")
@@ -57,10 +60,13 @@ describe("createSupabaseServerClientOptional", () => {
     process.env.NEXT_PUBLIC_SUPABASE_URL = "https://example.supabase.co"
     process.env.SUPABASE_SERVICE_KEY = "service-key"
 
-    const client = createSupabaseServerClientOptional() as any
+    const client = createSupabaseServerClientOptional() as unknown as {
+      url: string
+      key: string
+    } | null
 
     expect(client).not.toBeNull()
-    expect(client.url).toBe("https://example.supabase.co")
-    expect(client.key).toBe("service-key")
+    expect(client?.url).toBe("https://example.supabase.co")
+    expect(client?.key).toBe("service-key")
   })
 })

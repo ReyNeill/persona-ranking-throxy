@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 
+import { RANKING_CONFIG } from "@/lib/constants"
 import { runRanking } from "@/lib/ranking"
 
 export const runtime = "nodejs"
@@ -29,14 +30,22 @@ export async function handleRankRequest(
 
   const topNValue = Number(body.topN)
   const minScoreValue = Number(body.minScore)
-  const topN = Number.isFinite(topNValue) ? topNValue : 3
-  const minScore = Number.isFinite(minScoreValue) ? minScoreValue : 0.4
+  const topN = Number.isFinite(topNValue) ? topNValue : RANKING_CONFIG.DEFAULT_TOP_N
+  const minScore = Number.isFinite(minScoreValue)
+    ? minScoreValue
+    : RANKING_CONFIG.DEFAULT_MIN_SCORE
 
   try {
     const result = await deps.runRanking({
       personaSpec: trimmedSpec,
-      topN: Math.max(1, Math.min(topN, 25)),
-      minScore: Math.max(0, Math.min(minScore, 1)),
+      topN: Math.max(
+        RANKING_CONFIG.MIN_TOP_N,
+        Math.min(topN, RANKING_CONFIG.MAX_TOP_N)
+      ),
+      minScore: Math.max(
+        RANKING_CONFIG.MIN_SCORE,
+        Math.min(minScore, RANKING_CONFIG.MAX_SCORE)
+      ),
       ingestionId: body.ingestionId ?? null,
     })
 

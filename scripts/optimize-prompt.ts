@@ -27,13 +27,6 @@ type CompanyGroup = {
   leads: EvalLead[]
 }
 
-type CompanyMetrics = {
-  ndcg: number
-  mrr: number
-  precision: number
-  top1: number
-}
-
 type EvalMetrics = {
   ndcg: number
   mrr: number
@@ -138,8 +131,11 @@ const EMPHASIS_LINES = [
   "Explicitly exclude marketing, finance, HR, product, and engineering leaders.",
 ]
 
-let queryModel: ReturnType<typeof getOpenRouterModel> | null = null
-let optimizerModel: ReturnType<typeof getOpenRouterModel> | null = null
+// Type for the model parameter expected by generateText
+type GenerateTextModel = Parameters<typeof generateText>[0]["model"]
+
+let queryModel: GenerateTextModel | null = null
+let optimizerModel: GenerateTextModel | null = null
 
 const personaSpec = fs.readFileSync(personaPath, "utf8").trim()
 
@@ -426,9 +422,10 @@ function summarizeFailures(failures: FailureExample[]) {
 
 async function buildQuery(promptTemplate: string) {
   if (promptTemplate === DIRECT_PROMPT) return personaSpec
+  if (!queryModel) throw new Error("Query model not initialized")
   const prompt = renderPersonaQueryPrompt(promptTemplate, personaSpec)
   const result = await generateText({
-    model: queryModel as any,
+    model: queryModel,
     prompt,
   })
   const cleaned = result.text.trim()
@@ -606,8 +603,9 @@ async function generateCandidatePrompts(
     console.log("[debug] End optimizer meta-prompt\n")
   }
 
+  if (!optimizerModel) throw new Error("Optimizer model not initialized")
   const result = await generateText({
-    model: optimizerModel as any,
+    model: optimizerModel,
     prompt,
   })
 
@@ -736,18 +734,22 @@ if (!process.env.OPENROUTER_API_KEY) {
   process.exit(1)
 }
 
-queryModel = getOpenRouterModel(queryModelId)
-optimizerModel = getOpenRouterModel(optimizerModelId)
+// OpenRouter SDK types don't fully match AI SDK v6 yet, but runtime is compatible
+const queryModelRaw = getOpenRouterModel(queryModelId)
+const optimizerModelRaw = getOpenRouterModel(optimizerModelId)
 
-if (!queryModel) {
+if (!queryModelRaw) {
   console.error("Unable to create OpenRouter model for query generation.")
   process.exit(1)
 }
 
-if (!optimizerModel) {
+if (!optimizerModelRaw) {
   console.error("Unable to create OpenRouter model for prompt optimization.")
   process.exit(1)
 }
+
+queryModel = queryModelRaw as unknown as GenerateTextModel
+optimizerModel = optimizerModelRaw as unknown as GenerateTextModel
 
 const evaluations = new Map<string, PromptEvaluation>()
 

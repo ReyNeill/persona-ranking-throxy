@@ -1,3 +1,4 @@
+import { RANKING_CONFIG } from "@/lib/constants"
 import { runRanking } from "@/lib/ranking"
 
 export const runtime = "nodejs"
@@ -27,10 +28,17 @@ export async function handleRankStreamRequest(
 
   const topNValue = Number(body.topN)
   const minScoreValue = Number(body.minScore)
-  const topN = Number.isFinite(topNValue) ? topNValue : 3
-  const minScore = Number.isFinite(minScoreValue) ? minScoreValue : 0.4
+  const topN = Number.isFinite(topNValue)
+    ? topNValue
+    : RANKING_CONFIG.DEFAULT_TOP_N
+  const minScore = Number.isFinite(minScoreValue)
+    ? minScoreValue
+    : RANKING_CONFIG.DEFAULT_MIN_SCORE
 
   const encoder = new TextEncoder()
+
+  // AbortController to cancel the ranking operation if client disconnects
+  const abortController = new AbortController()
 
   const stream = new ReadableStream({
     start(controller) {
@@ -44,8 +52,14 @@ export async function handleRankStreamRequest(
       }
 
       const handleAbort = () => {
+        if (closed) return
         closed = true
-        controller.close()
+        abortController.abort()
+        try {
+          controller.close()
+        } catch {
+          // Controller may already be closed
+        }
       }
 
       if (request.signal.aborted) {
@@ -58,23 +72,51 @@ export async function handleRankStreamRequest(
       deps.runRanking(
         {
           personaSpec: trimmedSpec,
-          topN: Math.max(1, Math.min(topN, 25)),
-          minScore: Math.max(0, Math.min(minScore, 1)),
+          topN: Math.max(
+            RANKING_CONFIG.MIN_TOP_N,
+            Math.min(topN, RANKING_CONFIG.MAX_TOP_N)
+          ),
+          minScore: Math.max(
+            RANKING_CONFIG.MIN_SCORE,
+            Math.min(minScore, RANKING_CONFIG.MAX_SCORE)
+          ),
           ingestionId: body.ingestionId ?? null,
         },
         {
           onProgress: async (event) => {
+            // Check if aborted before sending each event
+            if (abortController.signal.aborted) return
             send(event)
           },
+          signal: abortController.signal,
         }
       )
         .then(() => {
-          if (!closed) controller.close()
+          if (!closed) {
+            closed = true
+            controller.close()
+          }
         })
         .catch((error) => {
+          if (closed) return
+          // Don't send error for abort
+          if (error instanceof Error && error.name === "AbortError") {
+            closed = true
+            try {
+              controller.close()
+            } catch {
+              // Already closed
+            }
+            return
+          }
           const message = error instanceof Error ? error.message : "Unknown error"
           send({ type: "error", message })
-          if (!closed) controller.close()
+          closed = true
+          try {
+            controller.close()
+          } catch {
+            // Already closed
+          }
         })
     },
   })

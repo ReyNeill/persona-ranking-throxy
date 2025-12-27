@@ -77,16 +77,15 @@ bun run test
 ## Key decisions
 
 - **Relevance gating**: a min score threshold prevents obviously irrelevant roles from being selected if roles are provided on the schema.
-- **No UI for Prompt Optimization**: it all happens locally via commands with the idea of our Ranking Persona service being used by external users (obvious gatekeeping)
-- **Test suite**: there has to be one always (same applies to Bun)
-- **Reason column**: the reason column is provided by herustics instead of LLMs to help me wallet :)
-- **Realtime updates**: we are using SSE hence we are only reading and not writing, discarting WebSockets
+- **No UI for Prompt Optimization**: it all happens locally via commands with the idea of our Ranking Persona service being used by external users (obvious gatekeeping).
+- **Test suite**: there has to be one always (same applies to Bun).
+- **Reason column**: the reason column is provided by heuristics instead of LLMs to reduce costs.
+- **Realtime updates**: we are using SSE since we are only reading (not writing), discarding WebSockets.
 - **Reusable pipeline**: ranking runs are stored independently, so future CSVs can be ingested and re-ranked without changing code.
 - **AI providers**: OpenRouter for persona summarization (usage-based cost capture when enabled), Cohere Rerank for deterministic ranking.
 - **Ranking system**: we are currently using AI ranking (Cohere's rerank-3.5 model using the latest AI SDK v6). AI ranking was decided by:
- 1: Task recomendattion
- 2: Time and money (The best recommendation algorithms are tailored ML models, I have experince on this but requires a budget and more time.
-    Fine-tuning an exsiting OS ranking model on our data is also the best alternative option for faster deployment.
+  1. Task recommendation
+  2. Time and money (the best recommendation algorithms are tailored ML models; I have experience with this but it requires a budget and more time. Fine-tuning an existing OS ranking model on our data is also the best alternative option for faster deployment).
 
 ## Deploy
 
