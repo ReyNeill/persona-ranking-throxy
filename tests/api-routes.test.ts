@@ -78,8 +78,8 @@ describe("/api/rank", () => {
     })
     expect(response.status).toBe(200)
     await expect(response.json()).resolves.toEqual({
+      ...baseRankingResult,
       runId: "run-1",
-      companies: [],
     })
 
     expect(lastRunRankingInput).toEqual({

@@ -57,7 +57,7 @@ export function RankingTable({
   ])
   const [pagination, setPagination] = React.useState({
     pageIndex: 0,
-    pageSize: 9,
+    pageSize: 10,
   })
 
   const data = React.useMemo(() => leads, [leads])
@@ -97,9 +97,11 @@ export function RankingTable({
         cell: ({ row }) => {
           const lead = row.original
           return (
-            <div className="space-y-1">
-              <div className="font-medium">{lead.fullName ?? "Unknown"}</div>
-              <div className="text-muted-foreground text-xs">
+            <div className="min-w-0 space-y-1">
+              <div className="font-medium line-clamp-1">
+                {lead.fullName ?? "Unknown"}
+              </div>
+              <div className="text-muted-foreground text-xs line-clamp-1">
                 {lead.email ?? lead.linkedinUrl ?? "No contact"}
               </div>
             </div>
@@ -109,7 +111,11 @@ export function RankingTable({
       {
         accessorKey: "title",
         header: "Title",
-        cell: ({ row }) => row.original.title ?? "Unknown",
+        cell: ({ row }) => (
+          <span className="line-clamp-2">
+            {row.original.title ?? "Unknown"}
+          </span>
+        ),
       },
       {
         accessorKey: "rank",
@@ -175,7 +181,11 @@ export function RankingTable({
       {
         accessorKey: "reason",
         header: "Reason",
-        cell: ({ row }) => row.original.reason ?? "—",
+        cell: ({ row }) => (
+          <span className="text-muted-foreground line-clamp-2">
+            {row.original.reason ?? "—"}
+          </span>
+        ),
       },
     ],
     []
@@ -199,46 +209,49 @@ export function RankingTable({
       }
     >
       <div className="overflow-hidden rounded-2xl border">
-      <Table>
-        <TableHeader>
-          {table.getHeaderGroups().map((headerGroup) => (
-            <TableRow key={headerGroup.id}>
-              {headerGroup.headers.map((header) => (
-                <TableHead key={header.id}>
-                  {header.isPlaceholder
-                    ? null
-                    : flexRender(
-                        header.column.columnDef.header,
-                        header.getContext()
-                      )}
-                </TableHead>
-              ))}
-            </TableRow>
-          ))}
-        </TableHeader>
-        <TableBody>
-          {table.getPaginationRowModel().rows.length ? (
-            table.getPaginationRowModel().rows.map((row) => (
-              <TableRow
-                key={row.id}
-                data-state={row.original.selected ? "selected" : undefined}
-              >
-                {row.getVisibleCells().map((cell) => (
-                  <TableCell key={cell.id}>
-                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                  </TableCell>
+        <Table className="table-fixed text-xs [&_td]:align-top [&_td]:py-2 [&_th]:whitespace-nowrap">
+          <TableHeader>
+            {table.getHeaderGroups().map((headerGroup) => (
+              <TableRow key={headerGroup.id}>
+                {headerGroup.headers.map((header) => (
+                  <TableHead key={header.id}>
+                    {header.isPlaceholder
+                      ? null
+                      : flexRender(
+                          header.column.columnDef.header,
+                          header.getContext()
+                        )}
+                  </TableHead>
                 ))}
               </TableRow>
-            ))
-          ) : (
-            <TableRow>
-              <TableCell colSpan={columns.length} className="h-24 text-center">
-                No results.
-              </TableCell>
-            </TableRow>
-          )}
-        </TableBody>
-      </Table>
+            ))}
+          </TableHeader>
+          <TableBody>
+            {table.getPaginationRowModel().rows.length ? (
+              table.getPaginationRowModel().rows.map((row) => (
+                <TableRow
+                  key={row.id}
+                  data-state={row.original.selected ? "selected" : undefined}
+                >
+                  {row.getVisibleCells().map((cell) => (
+                    <TableCell key={cell.id}>
+                      {flexRender(
+                        cell.column.columnDef.cell,
+                        cell.getContext()
+                      )}
+                    </TableCell>
+                  ))}
+                </TableRow>
+              ))
+            ) : (
+              <TableRow>
+                <TableCell colSpan={columns.length} className="h-24 text-center">
+                  No results.
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
       </div>
       {shouldShowPagination ? (
         <div

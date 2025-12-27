@@ -7,5 +7,7 @@
 
 # personal ones
 - [x] test suite
-- [ ] make a favicon
+- [x] throxy style appropiation lmao
+- [x] heuristics reason to not waste my money
+- [x] favicon
 - [ ] background job queue for large CSVs.

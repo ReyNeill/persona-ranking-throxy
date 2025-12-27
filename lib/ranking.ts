@@ -198,6 +198,115 @@ function extractEmployeeRange(data?: Record<string, unknown> | null) {
   return null
 }
 
+type Phrase = {
+  raw: string
+  norm: string
+}
+
+const SENIORITY_KEYWORDS = [
+  "vp",
+  "vice president",
+  "head",
+  "director",
+  "chief",
+  "c-level",
+  "ceo",
+  "cfo",
+  "coo",
+  "cmo",
+  "cro",
+  "founder",
+  "owner",
+  "president",
+  "lead",
+  "principal",
+]
+
+function normalizeText(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()
+}
+
+function extractPersonaPhrases(spec: string, label: string) {
+  const regex = new RegExp(`${label}\\s*:\\s*([^\\n.]+)`, "i")
+  const match = spec.match(regex)
+  if (!match) return []
+  return match[1]
+    .split(/,|;|\n|\//g)
+    .map((part) => part.replace(/[()]/g, "").trim())
+    .filter(Boolean)
+}
+
+function buildPhraseList(rawPhrases: string[]) {
+  return rawPhrases
+    .map((raw) => ({ raw, norm: normalizeText(raw) }))
+    .filter((phrase) => phrase.norm.length > 0)
+}
+
+function findPhraseMatch(phrases: Phrase[], haystack: string) {
+  return phrases.find((phrase) => haystack.includes(phrase.norm)) ?? null
+}
+
+function buildHeuristicReason({
+  title,
+  companyName,
+  personaSpec,
+  isRelevant,
+}: {
+  title: string | null
+  companyName: string
+  personaSpec: string
+  isRelevant: boolean
+}) {
+  const titleNorm = normalizeText(title ?? "")
+  const combinedNorm = normalizeText(`${title ?? ""} ${companyName}`)
+
+  const targetPhrases = buildPhraseList(
+    extractPersonaPhrases(personaSpec, "Target")
+  )
+  const avoidPhrases = buildPhraseList(
+    extractPersonaPhrases(personaSpec, "Avoid")
+  )
+  const preferPhrases = buildPhraseList(
+    extractPersonaPhrases(personaSpec, "Prefer")
+  )
+  const seniorityPhrases = buildPhraseList(SENIORITY_KEYWORDS)
+
+  const avoidMatch = findPhraseMatch(avoidPhrases, titleNorm)
+  if (avoidMatch) {
+    return `Below threshold: ${avoidMatch.raw} role detected.`
+  }
+
+  const targetMatch = findPhraseMatch(targetPhrases, titleNorm)
+  const seniorityMatch = findPhraseMatch(seniorityPhrases, titleNorm)
+  const preferMatch = findPhraseMatch(preferPhrases, combinedNorm)
+
+  if (isRelevant) {
+    const parts: string[] = []
+    if (targetMatch) {
+      parts.push(`Target role: ${targetMatch.raw}`)
+    } else if (seniorityMatch) {
+      parts.push(`Seniority: ${seniorityMatch.raw}`)
+    }
+    if (preferMatch) {
+      parts.push(`Industry fit: ${preferMatch.raw}`)
+    }
+    return parts.length > 0
+      ? `${parts.join(". ")}.`
+      : "Relevant based on persona match signals."
+  }
+
+  if (targetMatch) {
+    return `Below threshold despite target role: ${targetMatch.raw}.`
+  }
+  if (seniorityMatch) {
+    return `Below threshold despite seniority: ${seniorityMatch.raw}.`
+  }
+  if (preferMatch) {
+    return `Below threshold despite industry fit: ${preferMatch.raw}.`
+  }
+  return "Below relevance threshold for this persona."
+}
+
 function normalizeRate(value: number) {
   return Number.isFinite(value) ? value : null
 }
@@ -521,9 +630,12 @@ export async function runRanking({
         relevantRank += 1
       }
 
-      const reason = isRelevant
-        ? "Matched persona criteria based on title and company context."
-        : "Below relevance threshold for this persona."
+      const reason = buildHeuristicReason({
+        title: lead.title,
+        companyName,
+        personaSpec,
+        isRelevant,
+      })
 
       rankedLeads.push({
         leadId: lead.id,

@@ -48,10 +48,29 @@ import {
 } from "@/components/ui/pagination"
 import { toast } from "sonner"
 
-const DEFAULT_PERSONA_SPEC = `We sell a sales engagement platform.
+const DEFAULT_PERSONA_SPECS = [
+  `We sell a sales engagement platform.
 Target: revenue leaders (VP Sales, Head of Sales, Sales Ops, RevOps).
 Avoid: HR, Recruiting, IT, Finance, Legal, or non-revenue roles.
-Prefer mid-market to enterprise companies and decision-makers.`
+Prefer mid-market to enterprise companies and decision-makers.`,
+  `We help B2B marketing teams accelerate pipeline.
+Target: demand gen, growth, and marketing ops leaders.
+Avoid: student roles, recruiters, and customer support.
+Prefer SaaS companies with 50–500 employees.`,
+  `We provide outbound infrastructure for healthcare companies.
+Target: VP Sales, Head of Growth, or Revenue Operations.
+Avoid: clinicians, nurses, and non-commercial roles.
+Prefer healthcare software or services companies.`,
+  `We support manufacturing firms with AI-driven prospecting.
+Target: sales leadership and business development heads.
+Avoid: IT support, finance, and HR.
+Prefer mid-market to enterprise manufacturers.`,
+]
+
+function pickRandomPersonaSpec() {
+  const index = Math.floor(Math.random() * DEFAULT_PERSONA_SPECS.length)
+  return DEFAULT_PERSONA_SPECS[index]
+}
 
 type ProgressStatus = "idle" | "running" | "completed" | "error"
 
@@ -77,7 +96,9 @@ type RankingStreamEvent =
   | { type: "error"; message: string }
 
 export function RankingClient() {
-  const [personaSpec, setPersonaSpec] = React.useState(DEFAULT_PERSONA_SPEC)
+  const [personaSpec, setPersonaSpec] = React.useState(
+    () => pickRandomPersonaSpec()
+  )
   const [topN, setTopN] = React.useState(3)
   const [minScore, setMinScore] = React.useState(0.4)
   const [results, setResults] = React.useState<RankingResponse | null>(null)
@@ -484,6 +505,11 @@ export function RankingClient() {
           setStatsVersion((version) => version + 1)
           toast.success("Ranking complete", {
             description: "Results updated with the latest ranking run.",
+            style: {
+              "--success-bg": "var(--ranking-toast-bg)",
+              "--success-text": "var(--ranking-toast-text)",
+              "--success-border": "var(--ranking-toast-border)",
+            } as React.CSSProperties,
           })
           return
         }
@@ -543,25 +569,31 @@ export function RankingClient() {
   }
 
   return (
-    <div className="mx-auto flex w-full max-w-5xl flex-col gap-8 px-6 py-12">
+    <div className="relative mx-auto flex w-full max-w-5xl flex-col gap-8 px-6 py-12">
       <section className="flex flex-col gap-3">
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-2">
             <div className="flex items-center gap-3">
-              <Image
-                src="/throxy-logo.avif"
-                alt="PRS logo"
-                width={96}
-                height={42}
-                className="h-9 w-auto"
-                priority
-              />
-              <p className="text-primary/70 text-sm uppercase tracking-[0.3em]">
+              <div className="relative">
+                <span
+                  aria-hidden
+                  className="pointer-events-none absolute -inset-8 hidden rounded-full bg-[radial-gradient(circle,rgba(248,244,240,0.55),rgba(248,244,240,0)_72%)] blur-3xl dark:block"
+                />
+                <Image
+                  src="/throxy-logo.avif"
+                  alt="PRS logo"
+                  width={96}
+                  height={42}
+                  className="relative h-9 w-auto"
+                  priority
+                />
+              </div>
+              <span className="border-primary/30 bg-primary/15 text-primary text-[10px] uppercase tracking-[0.35em] border px-2 py-1">
                 PRS
-              </p>
+              </span>
             </div>
-            <h1 className="text-3xl font-semibold tracking-tight">
-              Rank leads per company with AI
+            <h1 className="text-3xl font-semibold tracking-tight text-balance">
+              Rank your next leads based on your spec.
             </h1>
             <p className="text-muted-foreground text-base">
               Provide the persona spec, run ranking, and surface only the most
@@ -772,7 +804,7 @@ export function RankingClient() {
               size="sm"
               onClick={() => setIsPromptDialogOpen(true)}
             >
-              Active best prompt
+              Active optimized prompt
             </Button>
             <Button
               variant="default"
