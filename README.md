@@ -100,6 +100,14 @@ The API includes in-memory rate limiting for expensive operations:
 2. **Zero external dependencies**: No need to provision something like Redis or Upstash for a task submission.
 3. **Demonstrates the pattern**: The code structure (`lib/rate-limit.ts`) follows production patterns and can be easily swapped for Redis-based rate limiting (e.g., Upstash) by replacing the storage layer.
 
+## Scope decisions (intentional)
+
+These are some conscious tradeoffs for a scoped assessment (single-user demo), not production defaults:
+
+- **Auth & data access**: API routes are unauthenticated and use a server-side service role to keep the flow simple. This means anyone with access to the deployment can trigger ranking/ingest and read results/cost data.
+- **Rate limiting**: The in-memory limiter is only applied to streaming ranking + ingestion; the non-streaming rank route is left unguarded for internal/test use.
+- **CSV ingest scale**: Ingestion reads the whole CSV in-memory and upserts companies per row; acceptable for small assessment datasets, not for large uploads.
+
 ## Deploy
 
 - Deployed on Vercel at persona-ranking-throxy.vercel.app

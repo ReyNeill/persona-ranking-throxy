@@ -522,209 +522,230 @@ export async function runRanking({
     throw new Error(runError.message)
   }
 
-  const leadQuery = supabase
-    .from("leads")
-    .select(
-      "id, full_name, title, email, linkedin_url, data, company_id, company:companies(id, name)"
-    )
-
-  const { data: leads, error: leadsError } = ingestionId
-    ? await leadQuery.eq("ingestion_id", ingestionId)
-    : await leadQuery
-
-  if (leadsError) {
-    throw new Error(leadsError.message)
-  }
-
-  const normalizedLeads = (leads as LeadRowRaw[] | null)
-    ?.map(normalizeLead)
-    .filter((lead): lead is LeadRow => Boolean(lead))
-
-  const grouped = new Map<string, LeadRow[]>()
-  for (const lead of normalizedLeads ?? []) {
-    const list = grouped.get(lead.company.id) ?? []
-    list.push(lead)
-    grouped.set(lead.company.id, list)
-  }
-
-  const activePrompt = await getActivePersonaQueryPrompt(supabase)
-  const personaQuery = await buildPersonaQuery(personaSpec, activePrompt)
-  await emit({ type: "persona_ready", runId: run.id })
-
-  const totalCompanies = grouped.size
-  await emit({ type: "start", runId: run.id, totalCompanies })
-
-  if (personaQuery.usage || personaQuery.provider) {
-    const usage = personaQuery.usage
-    const inputTokens = usage?.inputTokens ?? null
-    const outputTokens = usage?.outputTokens ?? null
-    const totalTokens = usage?.totalTokens ?? null
-    const costUsd = computeGenerationCost(usage)
-
-    await recordAiCall(supabase, {
-      run_id: run.id,
-      provider: personaQuery.provider ?? "openrouter",
-      model: personaQuery.modelId ?? DEFAULT_OPENROUTER_MODEL,
-      operation: "generate_text",
-      input_tokens: inputTokens,
-      output_tokens: outputTokens,
-      total_tokens: totalTokens,
-      cost_usd: personaQuery.costUsd ?? costUsd,
-      metadata: personaQuery.metadata ?? null,
-    })
-  }
-
-  const query = personaQuery.query
-  const allRankingRows: Array<{
-    run_id: string
-    lead_id: string
-    company_id: string
-    score: number | null
-    relevance: string
-    rank: number
-    selected: boolean
-    reason: string
-  }> = []
-  const companyResults: CompanyResults[] = []
-  let completedCompanies = 0
-
-  // Check for abort before starting the main ranking loop
-  checkAborted(signal)
-
-  for (const [companyId, companyLeads] of grouped.entries()) {
-    // Check for abort at the start of each company iteration
-    checkAborted(signal)
-
-    const companyName = companyLeads[0]?.company.name ?? "Unknown"
-    await emit({
-      type: "company_start",
-      runId: run.id,
-      companyId,
-      companyName,
-      index: completedCompanies + 1,
-      total: totalCompanies,
-    })
-    const documents = companyLeads.map(formatLeadText)
-    if (documents.length === 0) continue
-
-    const rerankResult = await rerank({
-      model: cohere.reranking(DEFAULT_RERANK_MODEL),
-      query,
-      documents,
-    })
-    const { ranking } = rerankResult
-
-    await recordAiCall(supabase, {
-      run_id: run.id,
-      provider: "cohere",
-      model: rerankResult.response?.modelId ?? DEFAULT_RERANK_MODEL,
-      operation: "rerank",
-      documents_count: documents.length,
-      cost_usd: computeRerankCost(),
-      metadata: {
-        companyId,
-        companyName: companyLeads[0]?.company.name ?? null,
-      },
-    })
-
-    const sorted = [...ranking].sort(
-      (a, b) => (b.score ?? 0) - (a.score ?? 0)
-    )
-
-    let relevantRank = 1
-    const rankedLeads: RankedLead[] = []
-
-    sorted.forEach((item, index) => {
-      const lead = companyLeads[item.originalIndex]
-      if (!lead) return
-      const score = item.score ?? null
-      const isRelevant = score !== null && score >= minScore
-      const selected = isRelevant && relevantRank <= topN
-
-      if (isRelevant) {
-        relevantRank += 1
-      }
-
-      const reason = buildHeuristicReason({
-        title: lead.title,
-        companyName,
-        personaSpec,
-        isRelevant,
+  const updateRunStatus = async (status: string, errorMessage: string | null) => {
+    const { error } = await supabase
+      .from("ranking_runs")
+      .update({
+        status,
+        completed_at: new Date().toISOString(),
+        error_message: errorMessage,
       })
-
-      rankedLeads.push({
-        leadId: lead.id,
-        fullName: lead.full_name,
-        title: lead.title,
-        email: lead.email,
-        linkedinUrl: lead.linkedin_url,
-        score,
-        relevance: isRelevant ? "relevant" : "irrelevant",
-        rank: index + 1,
-        selected,
-        reason,
-      })
-
-      allRankingRows.push({
-        run_id: run.id,
-        lead_id: lead.id,
-        company_id: companyId,
-        score,
-        relevance: isRelevant ? "relevant" : "irrelevant",
-        rank: index + 1,
-        selected,
-        reason,
-      })
-    })
-
-    companyResults.push({
-      companyId,
-      companyName,
-      leads: rankedLeads,
-    })
-
-    completedCompanies += 1
-    await emit({
-      type: "company_result",
-      runId: run.id,
-      company: {
-        companyId,
-        companyName,
-        leads: rankedLeads,
-      },
-      completed: completedCompanies,
-      total: totalCompanies,
-    })
-  }
-
-  if (allRankingRows.length > 0) {
-    const { error: insertError } = await supabase
-      .from("lead_rankings")
-      .insert(allRankingRows)
-
-    if (insertError) {
-      throw new Error(insertError.message)
+      .eq("id", run.id)
+    if (error) {
+      console.warn("Failed to update ranking run status:", error.message)
     }
   }
 
-  await supabase
-    .from("ranking_runs")
-    .update({ status: "completed" })
-    .eq("id", run.id)
-  await emit({
-    type: "complete",
-    runId: run.id,
-    completed: completedCompanies,
-    total: totalCompanies,
-  })
+  try {
+    const leadQuery = supabase
+      .from("leads")
+      .select(
+        "id, full_name, title, email, linkedin_url, data, company_id, company:companies(id, name)"
+      )
 
-  return {
-    runId: run.id,
-    createdAt: run.created_at,
-    topN: run.top_n,
-    minScore: run.min_score,
-    personaSpec: persona.spec,
-    companies: companyResults,
+    const { data: leads, error: leadsError } = ingestionId
+      ? await leadQuery.eq("ingestion_id", ingestionId)
+      : await leadQuery
+
+    if (leadsError) {
+      throw new Error(leadsError.message)
+    }
+
+    const normalizedLeads = (leads as LeadRowRaw[] | null)
+      ?.map(normalizeLead)
+      .filter((lead): lead is LeadRow => Boolean(lead))
+
+    const grouped = new Map<string, LeadRow[]>()
+    for (const lead of normalizedLeads ?? []) {
+      const list = grouped.get(lead.company.id) ?? []
+      list.push(lead)
+      grouped.set(lead.company.id, list)
+    }
+
+    const activePrompt = await getActivePersonaQueryPrompt(supabase)
+    const personaQuery = await buildPersonaQuery(personaSpec, activePrompt)
+    await emit({ type: "persona_ready", runId: run.id })
+
+    const totalCompanies = grouped.size
+    await emit({ type: "start", runId: run.id, totalCompanies })
+
+    if (personaQuery.usage || personaQuery.provider) {
+      const usage = personaQuery.usage
+      const inputTokens = usage?.inputTokens ?? null
+      const outputTokens = usage?.outputTokens ?? null
+      const totalTokens = usage?.totalTokens ?? null
+      const costUsd = computeGenerationCost(usage)
+
+      await recordAiCall(supabase, {
+        run_id: run.id,
+        provider: personaQuery.provider ?? "openrouter",
+        model: personaQuery.modelId ?? DEFAULT_OPENROUTER_MODEL,
+        operation: "generate_text",
+        input_tokens: inputTokens,
+        output_tokens: outputTokens,
+        total_tokens: totalTokens,
+        cost_usd: personaQuery.costUsd ?? costUsd,
+        metadata: personaQuery.metadata ?? null,
+      })
+    }
+
+    const query = personaQuery.query
+    const allRankingRows: Array<{
+      run_id: string
+      lead_id: string
+      company_id: string
+      score: number | null
+      relevance: string
+      rank: number
+      selected: boolean
+      reason: string
+    }> = []
+    const companyResults: CompanyResults[] = []
+    let completedCompanies = 0
+
+    // Check for abort before starting the main ranking loop
+    checkAborted(signal)
+
+    for (const [companyId, companyLeads] of grouped.entries()) {
+      // Check for abort at the start of each company iteration
+      checkAborted(signal)
+
+      const companyName = companyLeads[0]?.company.name ?? "Unknown"
+      await emit({
+        type: "company_start",
+        runId: run.id,
+        companyId,
+        companyName,
+        index: completedCompanies + 1,
+        total: totalCompanies,
+      })
+      const documents = companyLeads.map(formatLeadText)
+      if (documents.length === 0) continue
+
+      const rerankResult = await rerank({
+        model: cohere.reranking(DEFAULT_RERANK_MODEL),
+        query,
+        documents,
+      })
+      const { ranking } = rerankResult
+
+      await recordAiCall(supabase, {
+        run_id: run.id,
+        provider: "cohere",
+        model: rerankResult.response?.modelId ?? DEFAULT_RERANK_MODEL,
+        operation: "rerank",
+        documents_count: documents.length,
+        cost_usd: computeRerankCost(),
+        metadata: {
+          companyId,
+          companyName: companyLeads[0]?.company.name ?? null,
+        },
+      })
+
+      const sorted = [...ranking].sort(
+        (a, b) => (b.score ?? 0) - (a.score ?? 0)
+      )
+
+      let relevantRank = 1
+      const rankedLeads: RankedLead[] = []
+
+      sorted.forEach((item, index) => {
+        const lead = companyLeads[item.originalIndex]
+        if (!lead) return
+        const score = item.score ?? null
+        const isRelevant = score !== null && score >= minScore
+        const selected = isRelevant && relevantRank <= topN
+
+        if (isRelevant) {
+          relevantRank += 1
+        }
+
+        const reason = buildHeuristicReason({
+          title: lead.title,
+          companyName,
+          personaSpec,
+          isRelevant,
+        })
+
+        rankedLeads.push({
+          leadId: lead.id,
+          fullName: lead.full_name,
+          title: lead.title,
+          email: lead.email,
+          linkedinUrl: lead.linkedin_url,
+          score,
+          relevance: isRelevant ? "relevant" : "irrelevant",
+          rank: index + 1,
+          selected,
+          reason,
+        })
+
+        allRankingRows.push({
+          run_id: run.id,
+          lead_id: lead.id,
+          company_id: companyId,
+          score,
+          relevance: isRelevant ? "relevant" : "irrelevant",
+          rank: index + 1,
+          selected,
+          reason,
+        })
+      })
+
+      companyResults.push({
+        companyId,
+        companyName,
+        leads: rankedLeads,
+      })
+
+      completedCompanies += 1
+      await emit({
+        type: "company_result",
+        runId: run.id,
+        company: {
+          companyId,
+          companyName,
+          leads: rankedLeads,
+        },
+        completed: completedCompanies,
+        total: totalCompanies,
+      })
+    }
+
+    if (allRankingRows.length > 0) {
+      const { error: insertError } = await supabase
+        .from("lead_rankings")
+        .insert(allRankingRows)
+
+      if (insertError) {
+        throw new Error(insertError.message)
+      }
+    }
+
+    await updateRunStatus("completed", null)
+    await emit({
+      type: "complete",
+      runId: run.id,
+      completed: completedCompanies,
+      total: totalCompanies,
+    })
+
+    return {
+      runId: run.id,
+      createdAt: run.created_at,
+      topN: run.top_n,
+      minScore: run.min_score,
+      personaSpec: persona.spec,
+      companies: companyResults,
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error"
+    const status =
+      error instanceof Error && error.name === "AbortError"
+        ? "cancelled"
+        : "failed"
+    await updateRunStatus(status, status === "failed" ? message : null)
+    throw error
   }
 }
 
