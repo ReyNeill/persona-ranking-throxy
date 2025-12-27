@@ -1,5 +1,10 @@
 import { RANKING_CONFIG } from "@/lib/constants"
 import { runRanking } from "@/lib/ranking"
+import {
+  checkRateLimit,
+  getClientIdentifier,
+  RATE_LIMITS,
+} from "@/lib/rate-limit"
 
 export const runtime = "nodejs"
 
@@ -9,6 +14,35 @@ export async function handleRankStreamRequest(
   request: Request,
   deps: { runRanking: RunRankingFn } = { runRanking }
 ) {
+  // Apply rate limiting
+  const clientId = getClientIdentifier(request)
+  const rateLimitResult = checkRateLimit(
+    `ranking:${clientId}`,
+    RATE_LIMITS.ranking
+  )
+
+  if (!rateLimitResult.success) {
+    const retryAfter = Math.ceil(
+      (rateLimitResult.resetTime - Date.now()) / 1000
+    )
+    return new Response(
+      JSON.stringify({
+        error: "Too many ranking requests. Please try again later.",
+        retryAfter,
+      }),
+      {
+        status: 429,
+        headers: {
+          "Content-Type": "application/json",
+          "Retry-After": String(retryAfter),
+          "X-RateLimit-Limit": String(rateLimitResult.limit),
+          "X-RateLimit-Remaining": String(rateLimitResult.remaining),
+          "X-RateLimit-Reset": String(rateLimitResult.resetTime),
+        },
+      }
+    )
+  }
+
   const body = await request.json().catch(() => null)
 
   if (!body?.personaSpec || typeof body.personaSpec !== "string") {

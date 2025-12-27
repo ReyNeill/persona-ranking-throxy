@@ -87,6 +87,19 @@ bun run test
   1. Task recommendation
   2. Time and money (the best recommendation algorithms are tailored ML models; I have experience with this but it requires a budget and more time. Fine-tuning an existing OS ranking model on our data is also the best alternative option for faster deployment).
 
+## Rate limiting
+
+The API includes in-memory rate limiting for expensive operations:
+
+- **Ranking** (`/api/rank/stream`): 10 requests per minute per IP
+- **CSV upload** (`/api/ingest`): 5 requests per minute per IP
+
+**Why in-memory instead of Redis?** This is a technical assessment, so I chose a simpler in-memory solution intentionally:
+
+1. **Single-instance deployment**: The app runs on a single Vercel serverless function instance for this demo, making distributed state unnecessary.
+2. **Zero external dependencies**: No need to provision something like Redis or Upstash for a task submission.
+3. **Demonstrates the pattern**: The code structure (`lib/rate-limit.ts`) follows production patterns and can be easily swapped for Redis-based rate limiting (e.g., Upstash) by replacing the storage layer.
+
 ## Deploy
 
 - Deployed on Vercel at persona-ranking-throxy.vercel.app

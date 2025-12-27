@@ -1,11 +1,44 @@
 import { NextResponse } from "next/server"
 
 import { ingestCsvText } from "@/lib/ingest"
+import {
+  checkRateLimit,
+  getClientIdentifier,
+  RATE_LIMITS,
+} from "@/lib/rate-limit"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 
 export const runtime = "nodejs"
 
 export async function POST(request: Request) {
+  // Apply rate limiting
+  const clientId = getClientIdentifier(request)
+  const rateLimitResult = checkRateLimit(
+    `ingest:${clientId}`,
+    RATE_LIMITS.ingest
+  )
+
+  if (!rateLimitResult.success) {
+    const retryAfter = Math.ceil(
+      (rateLimitResult.resetTime - Date.now()) / 1000
+    )
+    return NextResponse.json(
+      {
+        error: "Too many upload requests. Please try again later.",
+        retryAfter,
+      },
+      {
+        status: 429,
+        headers: {
+          "Retry-After": String(retryAfter),
+          "X-RateLimit-Limit": String(rateLimitResult.limit),
+          "X-RateLimit-Remaining": String(rateLimitResult.remaining),
+          "X-RateLimit-Reset": String(rateLimitResult.resetTime),
+        },
+      }
+    )
+  }
+
   try {
     const formData = await request.formData()
     const file = formData.get("file")
