@@ -27,9 +27,10 @@ export function RankingClient() {
   // Data fetching hooks
   const { results, setResults, isLoading: isLoadingResults, setIsLoading: setIsLoadingResults } =
     useRankingResults()
-  const { stats, isLoading: isLoadingStats, refresh: refreshStats } = useRankingStats(
-    results?.runId
-  )
+  const { stats, isLoading: isLoadingStats, refresh: refreshStats } = useRankingStats({
+    runId: results?.runId,
+    waitForResults: isLoadingResults,
+  })
 
   // Streaming hook
   const { isRunning, isUploading, error, progress, runRanking } = useRankingStream({

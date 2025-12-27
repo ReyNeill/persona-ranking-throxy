@@ -3,7 +3,14 @@
 import * as React from "react"
 import type { StatsResponse } from "@/components/ranking-types"
 
-export function useRankingStats(runId: string | null | undefined) {
+type UseRankingStatsOptions = {
+  runId: string | null | undefined
+  /** Wait for this to be false before fetching (prevents double-fetch on initial load) */
+  waitForResults?: boolean
+}
+
+export function useRankingStats(options: UseRankingStatsOptions) {
+  const { runId, waitForResults = false } = options
   const [stats, setStats] = React.useState<StatsResponse | null>(null)
   const [isLoading, setIsLoading] = React.useState(false)
   const [version, setVersion] = React.useState(0)
@@ -13,6 +20,9 @@ export function useRankingStats(runId: string | null | undefined) {
   }, [])
 
   React.useEffect(() => {
+    // Don't fetch until results have loaded (avoids double-fetch)
+    if (waitForResults) return
+
     let isMounted = true
     const params = runId ? `?runId=${runId}` : ""
     setIsLoading(true)
@@ -31,7 +41,7 @@ export function useRankingStats(runId: string | null | undefined) {
     return () => {
       isMounted = false
     }
-  }, [runId, version])
+  }, [runId, version, waitForResults])
 
   return { stats, setStats, isLoading, refresh }
 }
