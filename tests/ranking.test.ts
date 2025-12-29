@@ -18,23 +18,14 @@ type Lead = {
 type GenerateTextOptions = {
   model: unknown
   prompt: string
+  responseFormat?: unknown
+  providerOptions?: unknown
 }
 
 type GenerateTextResult = {
   text: string
   usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number }
   providerMetadata?: Record<string, unknown>
-  response?: { modelId?: string }
-}
-
-type RerankOptions = {
-  model: unknown
-  query: string
-  documents: string[]
-}
-
-type RerankResult = {
-  ranking: Array<{ originalIndex: number; score: number }>
   response?: { modelId?: string }
 }
 
@@ -55,7 +46,6 @@ type SupabaseRankingStub = {
 let supabaseStub: SupabaseRankingStub | null = null
 let openrouterModel: Record<string, unknown> | null = null
 let generateTextImpl: ((options: GenerateTextOptions) => Promise<GenerateTextResult>) | null = null
-let rerankImpl: ((options: RerankOptions) => Promise<RerankResult | undefined>) | null = null
 
 mock.module("@/lib/supabase/server", () => ({
   createSupabaseServerClient: () => {
@@ -69,20 +59,10 @@ mock.module("@/lib/ai/openrouter", () => ({
   getOpenRouterModel: () => openrouterModel,
 }))
 
-mock.module("@ai-sdk/cohere", () => ({
-  cohere: {
-    reranking: (modelId: string) => ({ modelId }),
-  },
-}))
-
 mock.module("ai", () => ({
   generateText: async (options: GenerateTextOptions) => {
     if (!generateTextImpl) throw new Error("generateText not configured")
     return generateTextImpl(options)
-  },
-  rerank: async (options: RerankOptions) => {
-    if (!rerankImpl) throw new Error("rerank not configured")
-    return rerankImpl(options)
   },
   wrapLanguageModel: ({ model }: { model: unknown }) => model,
 }))
@@ -216,7 +196,6 @@ beforeEach(() => {
   supabaseStub = null
   openrouterModel = null
   generateTextImpl = null
-  rerankImpl = null
 })
 
 describe("runRanking", () => {
@@ -257,27 +236,36 @@ describe("runRanking", () => {
     supabaseStub = createSupabaseStub({ leads, prompt: "Summarize persona" })
     openrouterModel = { modelId: "openrouter" }
 
-    generateTextImpl = async () => ({
-      text: "AI query",
-      usage: { inputTokens: 100, outputTokens: 20, totalTokens: 120 },
-      providerMetadata: { openrouter: { usage: { cost: 0.002 } } },
-      response: { modelId: "openai/gpt-4o-mini" },
-    })
+    let rankCall = 0
+    generateTextImpl = async ({ prompt }) => {
+      if (prompt.includes("Leads:")) {
+        rankCall += 1
+        if (rankCall === 1) {
+          return {
+            text: JSON.stringify([
+              { index: 0, score: 0.9 },
+              { index: 1, score: 0.3 },
+            ]),
+            usage: { inputTokens: 120, outputTokens: 40, totalTokens: 160 },
+            providerMetadata: { openrouter: { usage: { cost: 0.004 } } },
+            response: { modelId: "openai/gpt-oss-120b" },
+          }
+        }
+        return {
+          text: JSON.stringify([{ index: 0, score: 0.6 }]),
+          usage: { inputTokens: 80, outputTokens: 20, totalTokens: 100 },
+          providerMetadata: { openrouter: { usage: { cost: 0.002 } } },
+          response: { modelId: "openai/gpt-oss-120b" },
+        }
+      }
 
-    const rerankResponses = [
-      {
-        ranking: [
-          { originalIndex: 1, score: 0.3 },
-          { originalIndex: 0, score: 0.9 },
-        ],
-        response: { modelId: "rerank-v3.5" },
-      },
-      {
-        ranking: [{ originalIndex: 0, score: 0.6 }],
-        response: { modelId: "rerank-v3.5" },
-      },
-    ]
-    rerankImpl = async () => rerankResponses.shift()
+      return {
+        text: "AI query",
+        usage: { inputTokens: 100, outputTokens: 20, totalTokens: 120 },
+        providerMetadata: { openrouter: { usage: { cost: 0.002 } } },
+        response: { modelId: "openai/gpt-4o-mini" },
+      }
+    }
 
     const result = await runRanking({
       personaSpec: "Target CFO",

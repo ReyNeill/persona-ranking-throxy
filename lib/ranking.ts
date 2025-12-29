@@ -1,20 +1,16 @@
-import {
-  generateText,
-  rerank,
-  wrapLanguageModel,
-  type LanguageModelUsage,
-} from "ai"
-import { cohere } from "@ai-sdk/cohere"
+import { generateText, wrapLanguageModel, type LanguageModelUsage } from "ai"
 
 import { getOpenRouterModel } from "@/lib/ai/openrouter"
-import {
-  AI_MODELS,
-  COST_CONFIG,
-} from "@/lib/constants"
+import { buildLeadScoreOutput } from "@/lib/ai/lead-score-output"
+import { AI_MODELS, COST_CONFIG } from "@/lib/constants"
 import {
   getPersonaQueryPromptTemplate,
   renderPersonaQueryPrompt,
 } from "@/lib/prompts/persona-query"
+import {
+  DEFAULT_RANKING_PROMPT,
+  renderRankingPrompt,
+} from "@/lib/prompts/ranking-prompt"
 import {
   createSupabaseServerClient,
   createSupabaseServerClientOptional,
@@ -134,8 +130,8 @@ type PersonaQueryResult = {
   metadata?: Record<string, unknown> | null
 }
 
-const DEFAULT_RERANK_MODEL = AI_MODELS.RERANK
-const DEFAULT_OPENROUTER_MODEL = AI_MODELS.OPENROUTER
+const DEFAULT_QUERY_MODEL = AI_MODELS.OPENROUTER_QUERY
+const DEFAULT_RANK_MODEL = AI_MODELS.OPENROUTER_RANK
 
 function formatLeadText(lead: LeadRow) {
   const employeeRange =
@@ -281,6 +277,96 @@ function buildHeuristicReason({
   return "Below relevance threshold for this persona."
 }
 
+type LeadScoreItem = {
+  index: number
+  score: number
+}
+
+function getResponseHealingOptions() {
+  return {
+    openrouter: {
+      plugins: [{ id: "response-healing" }],
+    },
+  }
+}
+
+function buildLeadScoringPrompt(
+  promptTemplate: string,
+  payload: {
+    personaQuery: string
+    companyName: string
+    leads: LeadRow[]
+  }
+) {
+  const leadLines = payload.leads
+    .map((lead, index) => `${index}. ${formatLeadText(lead)}`)
+    .join("\n")
+
+  return renderRankingPrompt(promptTemplate, {
+    personaQuery: payload.personaQuery,
+    companyName: payload.companyName,
+    leads: leadLines,
+  })
+}
+
+function clampScore(value: number) {
+  if (!Number.isFinite(value)) return 0
+  return Math.max(0, Math.min(1, value))
+}
+
+function extractJsonPayload(text: string): string | null {
+  const fencedMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/i)
+  const content = fencedMatch ? fencedMatch[1] : text
+  const arrayStart = content.indexOf("[")
+  const arrayEnd = content.lastIndexOf("]")
+  if (arrayStart >= 0 && arrayEnd > arrayStart) {
+    return content.slice(arrayStart, arrayEnd + 1)
+  }
+  const objectStart = content.indexOf("{")
+  const objectEnd = content.lastIndexOf("}")
+  if (objectStart >= 0 && objectEnd > objectStart) {
+    return content.slice(objectStart, objectEnd + 1)
+  }
+  return null
+}
+
+function parseLeadScores(
+  text: string,
+  count: number
+): { scores: number[]; parsedCount: number } {
+  const scores = Array.from({ length: count }, () => 0)
+  let parsedCount = 0
+  const payload = extractJsonPayload(text)
+  if (!payload) return { scores, parsedCount }
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(payload)
+  } catch {
+    return { scores, parsedCount }
+  }
+
+  const items = Array.isArray(parsed)
+    ? parsed
+    : Array.isArray((parsed as { items?: unknown }).items)
+      ? (parsed as { items: unknown[] }).items
+      : null
+
+  if (!items) return { scores, parsedCount }
+
+  for (const item of items) {
+    if (!item || typeof item !== "object") continue
+    const typed = item as Partial<LeadScoreItem>
+    const index = Number(typed.index)
+    const score = Number(typed.score)
+    if (!Number.isFinite(index) || index < 0 || index >= count) continue
+    scores[index] = clampScore(score)
+    parsedCount += 1
+  }
+
+  return { scores, parsedCount }
+}
+
 function computeGenerationCost(usage?: LanguageModelUsage): number | null {
   if (!usage) return null
 
@@ -296,12 +382,6 @@ function computeGenerationCost(usage?: LanguageModelUsage): number | null {
   return (inputTokens * inputCost + outputTokens * outputCost) / 1_000_000
 }
 
-function computeRerankCost(): number | null {
-  const costPer1k = COST_CONFIG.COHERE_RERANK_PER_1K
-  if (!Number.isFinite(costPer1k)) return null
-  return costPer1k / 1000
-}
-
 // Type for the model returned by generateText
 type GenerateTextModel = Parameters<typeof generateText>[0]["model"]
 
@@ -309,6 +389,11 @@ async function wrapWithDevtools(
   model: ReturnType<typeof getOpenRouterModel>
 ): Promise<GenerateTextModel | null> {
   if (!model) return null
+
+  if (typeof globalThis !== "undefined") {
+    ;(globalThis as { AI_SDK_LOG_WARNINGS?: boolean }).AI_SDK_LOG_WARNINGS =
+      false
+  }
 
   // Cast to the type expected by generateText - OpenRouter SDK types don't fully
   // match AI SDK v6 yet but the runtime implementation is compatible
@@ -349,7 +434,7 @@ async function buildPersonaQuery(
   personaSpec: string,
   promptTemplateOverride?: string | null
 ): Promise<PersonaQueryResult> {
-  const model = getOpenRouterModel(DEFAULT_OPENROUTER_MODEL)
+  const model = getOpenRouterModel(DEFAULT_QUERY_MODEL)
   const promptTemplate =
     promptTemplateOverride?.trim() || getPersonaQueryPromptTemplate()
   if (!model) return { query: personaSpec }
@@ -376,7 +461,7 @@ async function buildPersonaQuery(
     return {
       query: cleaned.length > 0 ? cleaned : personaSpec,
       usage: result.usage,
-      modelId: result.response?.modelId ?? DEFAULT_OPENROUTER_MODEL,
+      modelId: result.response?.modelId ?? DEFAULT_QUERY_MODEL,
       provider: "openrouter",
       costUsd,
       metadata: openrouterUsage ? { openrouterUsage } : null,
@@ -420,6 +505,75 @@ async function getActivePersonaQueryPrompt(
   }
 }
 
+/**
+ * Fetch the active ranking prompt from the database.
+ * Returns null if not found or on error (fails gracefully).
+ */
+async function getActiveRankingPrompt(
+  supabase: ReturnType<typeof createSupabaseServerClient>
+): Promise<string | null> {
+  try {
+    const { data, error } = await supabase
+      .from("prompt_settings")
+      .select("ranking_prompt")
+      .eq("id", "active")
+      .single()
+
+    if (error) {
+      return null
+    }
+    return data?.ranking_prompt ?? null
+  } catch (error) {
+    console.warn(
+      "Failed to fetch active ranking prompt, using default:",
+      error instanceof Error ? error.message : "Unknown error"
+    )
+    return null
+  }
+}
+
+type LeaderboardEntry = {
+  prompt?: string | null
+  score?: number | null
+}
+
+async function getLeaderboardRankingPrompt(
+  supabase: ReturnType<typeof createSupabaseServerClient>
+): Promise<string | null> {
+  try {
+    const { data, error } = await supabase
+      .from("prompt_leaderboards")
+      .select("data")
+      .eq("id", "active")
+      .single()
+
+    if (error) return null
+
+    const entries = (data?.data as { entries?: LeaderboardEntry[] } | null)
+      ?.entries
+    if (!entries || entries.length === 0) return null
+
+    let best: LeaderboardEntry | null = null
+    let bestScore = -Infinity
+    for (const entry of entries) {
+      const score = typeof entry.score === "number" ? entry.score : -Infinity
+      if (!entry.prompt) continue
+      if (score > bestScore) {
+        bestScore = score
+        best = entry
+      }
+    }
+
+    return best?.prompt ?? null
+  } catch (error) {
+    console.warn(
+      "Failed to fetch leaderboard prompt, using fallback:",
+      error instanceof Error ? error.message : "Unknown error"
+    )
+    return null
+  }
+}
+
 function normalizeRelation<T>(value: T | T[] | null): T | null {
   if (!value) return null
   return Array.isArray(value) ? value[0] ?? null : value
@@ -435,13 +589,47 @@ function normalizeLead(raw: LeadRowRaw): LeadRow | null {
   }
 }
 
+function normalizeDedupeValue(value?: string | null) {
+  return value?.trim().toLowerCase() ?? ""
+}
+
+function buildLeadDedupeKey(input: {
+  companyId: string
+  fullName?: string | null
+  title?: string | null
+  email?: string | null
+  linkedinUrl?: string | null
+}) {
+  return [
+    input.companyId,
+    normalizeDedupeValue(input.fullName),
+    normalizeDedupeValue(input.title),
+    normalizeDedupeValue(input.email),
+    normalizeDedupeValue(input.linkedinUrl),
+  ].join("|")
+}
+
+function leadQualityScore(lead: {
+  fullName?: string | null
+  title?: string | null
+  email?: string | null
+  linkedinUrl?: string | null
+}) {
+  let score = 0
+  if (lead.fullName) score += 1
+  if (lead.title) score += 1
+  if (lead.linkedinUrl) score += 2
+  if (lead.email) score += 3
+  return score
+}
+
 async function recordAiCall(
   supabase: ReturnType<typeof createSupabaseServerClient>,
   payload: {
     run_id: string
     provider: string
     model?: string | null
-    operation: "generate_text" | "rerank"
+    operation: "generate_text" | "rank"
     input_tokens?: number | null
     output_tokens?: number | null
     total_tokens?: number | null
@@ -512,8 +700,8 @@ export async function runRanking({
       status: "running",
       top_n: topN,
       min_score: minScore,
-      provider: "cohere",
-      model: DEFAULT_RERANK_MODEL,
+      provider: "openrouter",
+      model: DEFAULT_RANK_MODEL,
     })
     .select()
     .single()
@@ -555,16 +743,68 @@ export async function runRanking({
       ?.map(normalizeLead)
       .filter((lead): lead is LeadRow => Boolean(lead))
 
-    const grouped = new Map<string, LeadRow[]>()
+    const groupedByCompany = new Map<string, Map<string, LeadRow>>()
+    let duplicateLeads = 0
     for (const lead of normalizedLeads ?? []) {
-      const list = grouped.get(lead.company.id) ?? []
-      list.push(lead)
-      grouped.set(lead.company.id, list)
+      const companyId = lead.company.id
+      const key = buildLeadDedupeKey({
+        companyId,
+        fullName: lead.full_name,
+        title: lead.title,
+        email: lead.email,
+        linkedinUrl: lead.linkedin_url,
+      })
+      const companyMap = groupedByCompany.get(companyId) ?? new Map()
+      const existing = companyMap.get(key)
+      if (existing) {
+        duplicateLeads += 1
+        if (leadQualityScore({
+          fullName: lead.full_name,
+          title: lead.title,
+          email: lead.email,
+          linkedinUrl: lead.linkedin_url,
+        }) > leadQualityScore({
+          fullName: existing.full_name,
+          title: existing.title,
+          email: existing.email,
+          linkedinUrl: existing.linkedin_url,
+        })) {
+          companyMap.set(key, lead)
+        }
+        groupedByCompany.set(companyId, companyMap)
+        continue
+      }
+      companyMap.set(key, lead)
+      groupedByCompany.set(companyId, companyMap)
     }
 
-    const activePrompt = await getActivePersonaQueryPrompt(supabase)
-    const personaQuery = await buildPersonaQuery(personaSpec, activePrompt)
+    if (duplicateLeads > 0) {
+      console.warn(
+        `Deduped ${duplicateLeads} duplicate lead(s) before ranking.`
+      )
+    }
+
+    const grouped = new Map<string, LeadRow[]>()
+    for (const [companyId, map] of groupedByCompany.entries()) {
+      grouped.set(companyId, Array.from(map.values()))
+    }
+
+    const activeQueryPrompt = await getActivePersonaQueryPrompt(supabase)
+    const personaQuery = await buildPersonaQuery(personaSpec, activeQueryPrompt)
+    const activeRankingPrompt =
+      (await getLeaderboardRankingPrompt(supabase)) ??
+      (await getActiveRankingPrompt(supabase)) ??
+      DEFAULT_RANKING_PROMPT
     await emit({ type: "persona_ready", runId: run.id })
+
+    const rankModelRaw = getOpenRouterModel(DEFAULT_RANK_MODEL)
+    if (!rankModelRaw) {
+      throw new Error("Missing OPENROUTER_API_KEY for ranking.")
+    }
+    const rankModel = await wrapWithDevtools(rankModelRaw)
+    if (!rankModel) {
+      throw new Error("Unable to initialize ranking model.")
+    }
 
     const totalCompanies = grouped.size
     await emit({ type: "start", runId: run.id, totalCompanies })
@@ -579,7 +819,7 @@ export async function runRanking({
       await recordAiCall(supabase, {
         run_id: run.id,
         provider: personaQuery.provider ?? "openrouter",
-        model: personaQuery.modelId ?? DEFAULT_OPENROUTER_MODEL,
+        model: personaQuery.modelId ?? DEFAULT_QUERY_MODEL,
         operation: "generate_text",
         input_tokens: inputTokens,
         output_tokens: outputTokens,
@@ -622,29 +862,70 @@ export async function runRanking({
       const documents = companyLeads.map(formatLeadText)
       if (documents.length === 0) continue
 
-      const rerankResult = await rerank({
-        model: cohere.reranking(DEFAULT_RERANK_MODEL),
-        query,
-        documents,
+      const prompt = buildLeadScoringPrompt(activeRankingPrompt, {
+        personaQuery: query,
+        companyName,
+        leads: companyLeads,
       })
-      const { ranking } = rerankResult
+      let rankResult: Awaited<ReturnType<typeof generateText>>
+      try {
+        rankResult = await generateText({
+          model: rankModel,
+          prompt,
+          output: buildLeadScoreOutput(),
+          providerOptions: getResponseHealingOptions(),
+        })
+      } catch (error) {
+        console.warn(
+          "Lead scoring with structured outputs failed; retrying without response format.",
+          error instanceof Error ? error.message : error
+        )
+        rankResult = await generateText({
+          model: rankModel,
+          prompt,
+        })
+      }
+
+      const { scores, parsedCount } = parseLeadScores(
+        rankResult.text,
+        companyLeads.length
+      )
+      if (parsedCount === 0) {
+        console.warn(
+          "Lead scoring output could not be parsed; defaulting to zero scores.",
+          { companyId, companyName }
+        )
+      }
+
+      const providerMeta = rankResult.providerMetadata as
+        | OpenRouterUsageMetadata
+        | undefined
+      const openrouterUsage = providerMeta?.openrouter?.usage ?? null
+      const costUsd =
+        typeof openrouterUsage?.cost === "number"
+          ? openrouterUsage.cost
+          : computeGenerationCost(rankResult.usage)
 
       await recordAiCall(supabase, {
         run_id: run.id,
-        provider: "cohere",
-        model: rerankResult.response?.modelId ?? DEFAULT_RERANK_MODEL,
-        operation: "rerank",
+        provider: "openrouter",
+        model: rankResult.response?.modelId ?? DEFAULT_RANK_MODEL,
+        operation: "rank",
+        input_tokens: rankResult.usage?.inputTokens ?? null,
+        output_tokens: rankResult.usage?.outputTokens ?? null,
+        total_tokens: rankResult.usage?.totalTokens ?? null,
         documents_count: documents.length,
-        cost_usd: computeRerankCost(),
+        cost_usd: costUsd,
         metadata: {
           companyId,
           companyName: companyLeads[0]?.company.name ?? null,
+          openrouterUsage: openrouterUsage ?? null,
         },
       })
 
-      const sorted = [...ranking].sort(
-        (a, b) => (b.score ?? 0) - (a.score ?? 0)
-      )
+      const sorted = scores
+        .map((score, index) => ({ score, originalIndex: index }))
+        .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
 
       let relevantRank = 1
       const rankedLeads: RankedLead[] = []
@@ -811,10 +1092,24 @@ export async function getRankingResults(runId?: string | null) {
   }
 
   const grouped = new Map<string, CompanyResults>()
+  const seenByCompany = new Map<string, Set<string>>()
   for (const row of (rows as RankingRowRaw[] | null) ?? []) {
     const company = normalizeRelation(row.company)
     const lead = normalizeRelation(row.lead)
     if (!company || !lead) continue
+    const dedupeKey = buildLeadDedupeKey({
+      companyId: company.id,
+      fullName: lead.full_name ?? null,
+      title: lead.title ?? null,
+      email: lead.email ?? null,
+      linkedinUrl: lead.linkedin_url ?? null,
+    })
+    const seen = seenByCompany.get(company.id) ?? new Set<string>()
+    if (seen.has(dedupeKey)) {
+      continue
+    }
+    seen.add(dedupeKey)
+    seenByCompany.set(company.id, seen)
     const existing = grouped.get(company.id)
     const entry: CompanyResults =
       existing ?? {
@@ -839,12 +1134,41 @@ export async function getRankingResults(runId?: string | null) {
     grouped.set(company.id, entry)
   }
 
+  const dedupedCompanies = Array.from(grouped.values()).map((company) => {
+    const sorted = [...company.leads].sort((a, b) => {
+      const scoreA = a.score ?? 0
+      const scoreB = b.score ?? 0
+      if (scoreA !== scoreB) return scoreB - scoreA
+      return (a.rank ?? 0) - (b.rank ?? 0)
+    })
+    let relevantRank = 1
+    const recomputed = sorted.map((lead, index) => {
+      const score = lead.score ?? null
+      const isRelevant = score !== null && score >= run.min_score
+      const selected = isRelevant && relevantRank <= run.top_n
+      if (isRelevant) {
+        relevantRank += 1
+      }
+      return {
+        ...lead,
+        rank: index + 1,
+        relevance: isRelevant ? "relevant" : "irrelevant",
+        selected,
+      }
+    })
+
+    return {
+      ...company,
+      leads: recomputed,
+    }
+  })
+
   return {
     runId: run.id,
     createdAt: run.created_at,
     topN: run.top_n,
     minScore: run.min_score,
     personaSpec: null,
-    companies: Array.from(grouped.values()),
+    companies: dedupedCompanies,
   }
 }

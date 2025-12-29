@@ -155,7 +155,7 @@ export function CompanyTable({
             View prompt leaderboard
           </Button>
           <Button variant="outline" size="sm" onClick={onOpenPrompt}>
-            Active optimized prompt
+            Active ranking prompt
           </Button>
           <Button
             variant="default"
@@ -306,4 +306,3 @@ export function CompanyTable({
     </section>
   )
 }
-

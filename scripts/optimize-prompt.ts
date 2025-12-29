@@ -2,16 +2,20 @@ import fs from "node:fs"
 import process from "node:process"
 import dotenv from "dotenv"
 import { parse } from "csv-parse/sync"
-import { generateText, rerank } from "ai"
-import { cohere } from "@ai-sdk/cohere"
+import { generateText } from "ai"
 import { createClient } from "@supabase/supabase-js"
 
+import { buildLeadScoreOutput } from "@/lib/ai/lead-score-output"
 import { getOpenRouterModel } from "@/lib/ai/openrouter"
 import {
   DEFAULT_PERSONA_QUERY_PROMPT,
-  PERSONA_SPEC_PLACEHOLDER,
   renderPersonaQueryPrompt,
 } from "@/lib/prompts/persona-query"
+import {
+  DEFAULT_RANKING_PROMPT,
+  RANKING_PROMPT_PLACEHOLDERS,
+  renderRankingPrompt,
+} from "@/lib/prompts/ranking-prompt"
 
 type EvalLead = {
   fullName: string
@@ -49,7 +53,7 @@ type PromptLeaderboard = {
   updatedAt: string
   queryModelId: string
   optimizerModelId: string
-  rerankModelId: string
+  rankModelId: string
   evalPath: string
   personaPath: string
   entries: PromptLeaderboardEntry[]
@@ -70,8 +74,32 @@ type PromptEvaluation = {
   errorSummary: string
 }
 
+type UsageTotals = {
+  calls: number
+  inputTokens: number
+  outputTokens: number
+  totalTokens: number
+  cost: number
+  missingCost: number
+}
+
+type CompanyScoreResult = {
+  company: string
+  metrics: EvalMetrics
+  predictedTop: EvalLead | null
+  expectedTop: EvalLead | null
+}
+
 const envPath = fs.existsSync(".env.local") ? ".env.local" : ".env"
 dotenv.config({ path: envPath })
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+const serviceRoleKey = process.env.SUPABASE_SERVICE_KEY
+
+// Silence AI SDK compatibility warnings during optimization runs
+if (typeof globalThis !== "undefined") {
+  ;(globalThis as { AI_SDK_LOG_WARNINGS?: boolean }).AI_SDK_LOG_WARNINGS = false
+}
 
 function getArgValue(flag: string) {
   const index = process.argv.indexOf(flag)
@@ -94,9 +122,10 @@ const beamSize = getArgNumber("--beam", 3) ?? 3
 const maxCompanies = getArgNumber("--max-companies", null)
 const metricK = getArgNumber("--k", 10) ?? 10
 const mutationsPerRound = getArgNumber("--mutations", 2) ?? 2
-const trainRatioInput = Number.parseFloat(
-  getArgValue("--train-ratio") ?? "0.8"
-)
+const foldsInput = getArgNumber("--folds", 5) ?? 5
+const concurrencyInput = getArgNumber("--concurrency", 3) ?? 3
+const logEveryInput = getArgNumber("--log-every", 1) ?? 1
+const progressEnabled = !process.argv.includes("--no-progress")
 const seed = getArgNumber("--seed", Date.now()) ?? Date.now()
 const objective =
   (getArgValue("--objective") ?? "precision").toLowerCase() ?? "precision"
@@ -113,29 +142,53 @@ const queryModelId =
   process.env.OPENROUTER_MODEL ??
   "openai/gpt-oss-120b"
 const optimizerModelId = getArgValue("--optimizer-model") ?? queryModelId
-const rerankModelId = process.env.RERANK_MODEL ?? "rerank-v3.5"
+const rankModelId =
+  process.env.OPENROUTER_RANK_MODEL ??
+  process.env.OPENROUTER_MODEL ??
+  "openai/gpt-oss-120b"
 
-const DIRECT_PROMPT = "__DIRECT_PERSONA_SPEC__"
+const DIRECT_QUERY = "__DIRECT_PERSONA_SPEC__"
 
 const OUTPUT_LINE_VARIANTS = [
-  "Return only the query text, no bullets.",
-  "Output only the rewritten query text.",
-  "Respond with a single-paragraph query, nothing else.",
-  "Only return the query. No lists or commentary.",
+  "Return ONLY a JSON array of scores, no extra text.",
+  "Output JSON only: [{\"index\":0,\"score\":0.5}].",
+  "Respond with the JSON array only. No prose or bullets.",
+  "Return only the JSON array of {index, score} objects.",
 ]
 
 const EMPHASIS_LINES = [
-  "Focus on sales leadership and outbound owners; disqualify non-sales roles.",
-  "Explicitly prioritize sales development leadership and revenue owners.",
+  "Score higher for senior outbound owners and revenue leaders.",
+  "Penalize marketing, finance, HR, product, and engineering roles.",
   "Prefer decision-makers accountable for pipeline and outbound execution.",
-  "Explicitly exclude marketing, finance, HR, product, and engineering leaders.",
+  "Disqualify roles outside the persona's target function or seniority.",
 ]
 
 // Type for the model parameter expected by generateText
 type GenerateTextModel = Parameters<typeof generateText>[0]["model"]
 
+type OpenRouterUsageMetadata = {
+  openrouter?: {
+    usage?: {
+      cost?: number
+      prompt_tokens?: number
+      completion_tokens?: number
+      total_tokens?: number
+    }
+  }
+}
+
 let queryModel: GenerateTextModel | null = null
 let optimizerModel: GenerateTextModel | null = null
+let rankModel: GenerateTextModel | null = null
+
+const usageTotals: UsageTotals = {
+  calls: 0,
+  inputTokens: 0,
+  outputTokens: 0,
+  totalTokens: 0,
+  cost: 0,
+  missingCost: 0,
+}
 
 const personaSpec = fs.readFileSync(personaPath, "utf8").trim()
 
@@ -194,6 +247,124 @@ function formatLeadText(lead: EvalLead) {
   return parts.join(" | ")
 }
 
+type LeadScoreItem = {
+  index: number
+  score: number
+}
+
+function getResponseHealingOptions() {
+  return {
+    openrouter: {
+      plugins: [{ id: "response-healing" }],
+    },
+  }
+}
+
+function recordUsage(result: Awaited<ReturnType<typeof generateText>>) {
+  const usage = result.usage
+  const providerMeta = result.providerMetadata as
+    | OpenRouterUsageMetadata
+    | undefined
+  const openrouterUsage = providerMeta?.openrouter?.usage
+
+  const inputTokens =
+    usage?.inputTokens ?? openrouterUsage?.prompt_tokens ?? 0
+  const outputTokens =
+    usage?.outputTokens ?? openrouterUsage?.completion_tokens ?? 0
+  const totalTokens =
+    usage?.totalTokens ??
+    openrouterUsage?.total_tokens ??
+    inputTokens + outputTokens
+
+  usageTotals.calls += 1
+  usageTotals.inputTokens += inputTokens
+  usageTotals.outputTokens += outputTokens
+  usageTotals.totalTokens += totalTokens
+
+  if (typeof openrouterUsage?.cost === "number") {
+    usageTotals.cost += openrouterUsage.cost
+  } else {
+    usageTotals.missingCost += 1
+  }
+}
+
+function buildLeadScoringPrompt(
+  promptTemplate: string,
+  payload: {
+    personaQuery: string
+    companyName: string
+    leads: EvalLead[]
+  }
+) {
+  const leadLines = payload.leads
+    .map((lead, index) => `${index}. ${formatLeadText(lead)}`)
+    .join("\n")
+
+  return renderRankingPrompt(promptTemplate, {
+    personaQuery: payload.personaQuery,
+    companyName: payload.companyName,
+    leads: leadLines,
+  })
+}
+
+function clampScore(value: number) {
+  if (!Number.isFinite(value)) return 0
+  return Math.max(0, Math.min(1, value))
+}
+
+function extractJsonPayload(text: string): string | null {
+  const fencedMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/i)
+  const content = fencedMatch ? fencedMatch[1] : text
+  const arrayStart = content.indexOf("[")
+  const arrayEnd = content.lastIndexOf("]")
+  if (arrayStart >= 0 && arrayEnd > arrayStart) {
+    return content.slice(arrayStart, arrayEnd + 1)
+  }
+  const objectStart = content.indexOf("{")
+  const objectEnd = content.lastIndexOf("}")
+  if (objectStart >= 0 && objectEnd > objectStart) {
+    return content.slice(objectStart, objectEnd + 1)
+  }
+  return null
+}
+
+function parseLeadScores(
+  text: string,
+  count: number
+): { scores: number[]; parsedCount: number } {
+  const scores = Array.from({ length: count }, () => 0)
+  let parsedCount = 0
+  const payload = extractJsonPayload(text)
+  if (!payload) return { scores, parsedCount }
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(payload)
+  } catch {
+    return { scores, parsedCount }
+  }
+
+  const items = Array.isArray(parsed)
+    ? parsed
+    : Array.isArray((parsed as { items?: unknown }).items)
+      ? (parsed as { items: unknown[] }).items
+      : null
+
+  if (!items) return { scores, parsedCount }
+
+  for (const item of items) {
+    if (!item || typeof item !== "object") continue
+    const typed = item as Partial<LeadScoreItem>
+    const index = Number(typed.index)
+    const score = Number(typed.score)
+    if (!Number.isFinite(index) || index < 0 || index >= count) continue
+    scores[index] = clampScore(score)
+    parsedCount += 1
+  }
+
+  return { scores, parsedCount }
+}
+
 function mulberry32(seedValue: number) {
   let t = seedValue
   return () => {
@@ -215,14 +386,18 @@ function sampleCompanies(companies: CompanyGroup[]) {
   return shuffled.slice(0, maxCompanies)
 }
 
-function splitCompanies(companies: CompanyGroup[]) {
-  if (companies.length <= 1) {
-    return { train: companies, test: [] }
+function buildFolds(companies: CompanyGroup[], folds: number) {
+  const count = companies.length
+  if (count <= 1) {
+    return [
+      {
+        train: companies,
+        test: [],
+      },
+    ]
   }
 
-  const ratio = Number.isFinite(trainRatioInput)
-    ? Math.min(Math.max(trainRatioInput, 0.1), 0.9)
-    : 0.8
+  const safeFolds = Math.max(2, Math.min(folds, count))
   const rng = mulberry32(seed + 41)
   const shuffled = [...companies]
   for (let i = shuffled.length - 1; i > 0; i -= 1) {
@@ -230,14 +405,17 @@ function splitCompanies(companies: CompanyGroup[]) {
     ;[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
   }
 
-  const splitIndex = Math.min(
-    shuffled.length - 1,
-    Math.max(1, Math.floor(shuffled.length * ratio))
-  )
-  return {
-    train: shuffled.slice(0, splitIndex),
-    test: shuffled.slice(splitIndex),
-  }
+  const buckets: CompanyGroup[][] = Array.from({ length: safeFolds }, () => [])
+  shuffled.forEach((company, index) => {
+    buckets[index % safeFolds].push(company)
+  })
+
+  return buckets.map((test, index) => {
+    const train = buckets
+      .filter((_bucket, bucketIndex) => bucketIndex !== index)
+      .flat()
+    return { train, test }
+  })
 }
 
 function dcg(relevances: number[], k: number) {
@@ -279,15 +457,16 @@ function generateHeuristicMutations(
   rng: () => number
 ) {
   if (!promptTemplate) return []
-  if (!promptTemplate.includes(PERSONA_SPEC_PLACEHOLDER)) return []
+  const required = Object.values(RANKING_PROMPT_PLACEHOLDERS)
+  if (!required.every((placeholder) => promptTemplate.includes(placeholder))) return []
   if (count <= 0) return []
 
   const lines = promptTemplate.split("\n")
   const outputIndex = lines.findIndex((line) =>
-    /return only|output only|respond with/i.test(line)
+    /json|return only|output only|respond with/i.test(line)
   )
   const placeholderIndex = lines.findIndex((line) =>
-    line.includes(PERSONA_SPEC_PLACEHOLDER)
+    line.includes(RANKING_PROMPT_PLACEHOLDERS.PERSONA_QUERY)
   )
 
   const mutations = new Set<string>()
@@ -321,6 +500,15 @@ function generateHeuristicMutations(
   }
 
   return all.slice(0, Math.min(count, all.length))
+}
+
+function summarizePrompt(promptTemplate: string) {
+  const firstLine = promptTemplate
+    .split("\n")
+    .map((line) => line.trim())
+    .find((line) => line.length > 0)
+  if (!firstLine) return "prompt"
+  return firstLine.length > 60 ? `${firstLine.slice(0, 60)}…` : firstLine
 }
 
 function categorizeFunction(title: string | null) {
@@ -421,128 +609,308 @@ function summarizeFailures(failures: FailureExample[]) {
 }
 
 async function buildQuery(promptTemplate: string) {
-  if (promptTemplate === DIRECT_PROMPT) return personaSpec
+  if (promptTemplate === DIRECT_QUERY) return personaSpec
   if (!queryModel) throw new Error("Query model not initialized")
   const prompt = renderPersonaQueryPrompt(promptTemplate, personaSpec)
   const result = await generateText({
     model: queryModel,
     prompt,
   })
+  recordUsage(result)
   const cleaned = result.text.trim()
   return cleaned.length > 0 ? cleaned : personaSpec
 }
 
-async function evaluateOnCompanies(
-  query: string,
-  companies: CompanyGroup[],
-  captureFailures: boolean
-): Promise<{ metrics: EvalMetrics; failures: FailureExample[] }> {
+async function getActivePersonaQueryPrompt(): Promise<string | null> {
+  if (!supabaseUrl || !serviceRoleKey) return null
+  try {
+    const supabase = createClient(supabaseUrl, serviceRoleKey, {
+      auth: { persistSession: false },
+    })
+    const { data, error } = await supabase
+      .from("prompt_settings")
+      .select("persona_query_prompt")
+      .eq("id", "active")
+      .single()
+    if (error) return null
+    return data?.persona_query_prompt ?? null
+  } catch {
+    return null
+  }
+}
+
+
+async function runWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  worker: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  if (items.length === 0) return []
+  const safeLimit = Math.max(1, Math.min(limit, items.length))
+  const results = new Array<R>(items.length)
+  let nextIndex = 0
+
+  await Promise.all(
+    Array.from({ length: safeLimit }, async () => {
+      while (nextIndex < items.length) {
+        const current = nextIndex
+        nextIndex += 1
+        results[current] = await worker(items[current], current)
+      }
+    })
+  )
+
+  return results
+}
+
+async function scoreCompany(
+  promptTemplate: string,
+  personaQuery: string,
+  company: CompanyGroup
+): Promise<CompanyScoreResult> {
+  if (!rankModel) throw new Error("Rank model not initialized")
+  const prompt = buildLeadScoringPrompt(promptTemplate, {
+    personaQuery,
+    companyName: company.company,
+    leads: company.leads,
+  })
+  let rankResult: Awaited<ReturnType<typeof generateText>>
+  try {
+    rankResult = await generateText({
+      model: rankModel,
+      prompt,
+      output: buildLeadScoreOutput(),
+      providerOptions: getResponseHealingOptions(),
+    })
+    recordUsage(rankResult)
+  } catch (error) {
+    console.warn(
+      "Lead scoring with structured outputs failed; retrying without response format.",
+      error instanceof Error ? error.message : error
+    )
+    rankResult = await generateText({
+      model: rankModel,
+      prompt,
+    })
+    recordUsage(rankResult)
+  }
+
+  const { scores, parsedCount } = parseLeadScores(
+    rankResult.text,
+    company.leads.length
+  )
+  if (parsedCount === 0) {
+    console.warn(
+      "Lead scoring output could not be parsed; defaulting to zero scores.",
+      { company: company.company }
+    )
+    if (debug) {
+      console.log("[debug] Raw lead scoring response:")
+      console.log(rankResult.text)
+      console.log("[debug] End raw response")
+    }
+  }
+
+  const sorted = scores
+    .map((score, index) => ({ score, originalIndex: index }))
+    .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
+
+  const predicted = sorted
+    .map((item) => company.leads[item.originalIndex])
+    .filter(Boolean)
+
+  const ranks = company.leads
+    .map((lead) => lead.rank)
+    .filter((rank): rank is number => typeof rank === "number")
+
+  const maxRank = ranks.length > 0 ? Math.max(...ranks) : 0
+  const relevance = predicted.map((lead) => {
+    if (!lead.rank || maxRank === 0) return 0
+    return maxRank - lead.rank + 1
+  })
+
+  const idcgRelevance = [...relevance].sort((a, b) => b - a)
+  const dcgValue = dcg(relevance, metricK)
+  const idcgValue = dcg(idcgRelevance, metricK)
+  const ndcg = idcgValue > 0 ? dcgValue / idcgValue : 0
+
+  const topK = predicted.slice(0, metricK)
+  const relevantInTopK = topK.filter((lead) => lead.rank !== null).length
+  const precision = topK.length > 0 ? relevantInTopK / topK.length : 0
+
+  const bestLead = company.leads.find((lead) => lead.rank === 1) ?? null
+  let mrr = 0
+  if (bestLead) {
+    const index = predicted.findIndex(
+      (lead) =>
+        lead.fullName === bestLead.fullName && lead.title === bestLead.title
+    )
+    if (index >= 0) {
+      mrr = 1 / (index + 1)
+    }
+  }
+
+  const top1 =
+    predicted[0]?.rank === 1 ||
+    (bestLead &&
+      predicted[0]?.fullName === bestLead.fullName &&
+      predicted[0]?.title === bestLead.title)
+      ? 1
+      : 0
+
+  return {
+    company: company.company,
+    metrics: {
+      ndcg,
+      mrr,
+      precision,
+      top1,
+    },
+    predictedTop: predicted[0] ?? null,
+    expectedTop: bestLead,
+  }
+}
+
+async function scoreCompanies(
+  promptTemplate: string,
+  personaQuery: string,
+  companies: CompanyGroup[]
+): Promise<Map<string, CompanyScoreResult>> {
+  const total = companies.length
+  let completed = 0
+  const logEvery = Math.max(1, logEveryInput)
+  const label = summarizePrompt(promptTemplate)
+  if (progressEnabled) {
+    console.log(`Scoring companies for prompt: "${label}" (${total} total)`)
+  }
+  const results = await runWithConcurrency(
+    companies,
+    concurrencyInput,
+    async (company) => {
+      const result = await scoreCompany(promptTemplate, personaQuery, company)
+      completed += 1
+      if (
+        progressEnabled &&
+        (completed % logEvery === 0 || completed === total)
+      ) {
+        console.log(
+          `Progress: ${completed}/${total} companies scored for "${label}"`
+        )
+      }
+      return result
+    }
+  )
+  return new Map(results.map((result) => [result.company, result]))
+}
+
+function aggregateMetrics(
+  resultsByCompany: Map<string, CompanyScoreResult>,
+  companies: CompanyGroup[]
+) {
   let ndcgTotal = 0
   let mrrTotal = 0
   let precisionTotal = 0
   let top1Total = 0
-  const failures: FailureExample[] = []
+  let count = 0
 
   for (const company of companies) {
-    const documents = company.leads.map(formatLeadText)
-    if (documents.length === 0) continue
-
-    const rerankResult = await rerank({
-      model: cohere.reranking(rerankModelId),
-      query,
-      documents,
-    })
-
-    const sorted = [...rerankResult.ranking].sort(
-      (a, b) => (b.score ?? 0) - (a.score ?? 0)
-    )
-
-    const predicted = sorted
-      .map((item) => company.leads[item.originalIndex])
-      .filter(Boolean)
-
-    const ranks = company.leads
-      .map((lead) => lead.rank)
-      .filter((rank): rank is number => typeof rank === "number")
-
-    const maxRank = ranks.length > 0 ? Math.max(...ranks) : 0
-    const relevance = predicted.map((lead) => {
-      if (!lead.rank || maxRank === 0) return 0
-      return maxRank - lead.rank + 1
-    })
-
-    const idcgRelevance = [...relevance].sort((a, b) => b - a)
-    const dcgValue = dcg(relevance, metricK)
-    const idcgValue = dcg(idcgRelevance, metricK)
-    const ndcg = idcgValue > 0 ? dcgValue / idcgValue : 0
-
-    const topK = predicted.slice(0, metricK)
-    const relevantInTopK = topK.filter((lead) => lead.rank !== null).length
-    const precision = topK.length > 0 ? relevantInTopK / topK.length : 0
-
-    const bestLead = company.leads.find((lead) => lead.rank === 1)
-    let mrr = 0
-    if (bestLead) {
-      const index = predicted.findIndex(
-        (lead) =>
-          lead.fullName === bestLead.fullName && lead.title === bestLead.title
-      )
-      if (index >= 0) {
-        mrr = 1 / (index + 1)
-      }
-    }
-
-    const top1 =
-      predicted[0]?.rank === 1 ||
-      (bestLead &&
-        predicted[0]?.fullName === bestLead.fullName &&
-        predicted[0]?.title === bestLead.title)
-        ? 1
-        : 0
-
-    if (captureFailures && bestLead && predicted[0] && top1 === 0 && failures.length < 8) {
-      failures.push({
-        company: company.company,
-        expectedTop: bestLead,
-        predictedTop: predicted[0],
-      })
-    }
-
-    ndcgTotal += ndcg
-    mrrTotal += mrr
-    precisionTotal += precision
-    top1Total += top1
-
+    const result = resultsByCompany.get(company.company)
+    if (!result) continue
+    ndcgTotal += result.metrics.ndcg
+    mrrTotal += result.metrics.mrr
+    precisionTotal += result.metrics.precision
+    top1Total += result.metrics.top1
+    count += 1
   }
 
-  const count = companies.length
-  const metrics: EvalMetrics = {
+  return {
     ndcg: count > 0 ? ndcgTotal / count : 0,
     mrr: count > 0 ? mrrTotal / count : 0,
     precision: count > 0 ? precisionTotal / count : 0,
     top1: count > 0 ? top1Total / count : 0,
   }
+}
 
-  return { metrics, failures }
+function collectFailures(
+  resultsByCompany: Map<string, CompanyScoreResult>,
+  companies: CompanyGroup[],
+  limit: number
+) {
+  const failures: FailureExample[] = []
+  for (const company of companies) {
+    const result = resultsByCompany.get(company.company)
+    if (!result) continue
+    if (!result.expectedTop || !result.predictedTop) continue
+    if (result.metrics.top1 === 1) continue
+    failures.push({
+      company: company.company,
+      expectedTop: result.expectedTop,
+      predictedTop: result.predictedTop,
+    })
+    if (failures.length >= limit) break
+  }
+  return failures
 }
 
 async function evaluatePrompt(
   promptTemplate: string,
-  trainCompanies: CompanyGroup[],
-  testCompanies: CompanyGroup[]
+  personaQuery: string,
+  folds: Array<{ train: CompanyGroup[]; test: CompanyGroup[] }>,
+  companies: CompanyGroup[]
 ): Promise<PromptEvaluation> {
-  const query = await buildQuery(promptTemplate)
+  const resultsByCompany = await scoreCompanies(
+    promptTemplate,
+    personaQuery,
+    companies
+  )
 
-  const trainEval = await evaluateOnCompanies(query, trainCompanies, true)
-  const testEval = await evaluateOnCompanies(query, testCompanies, false)
-  const errorSummary = summarizeFailures(trainEval.failures)
+  let trainTotals = { ndcg: 0, mrr: 0, precision: 0, top1: 0 }
+  let testTotals = { ndcg: 0, mrr: 0, precision: 0, top1: 0 }
+
+  for (const fold of folds) {
+    const trainMetrics = aggregateMetrics(resultsByCompany, fold.train)
+    const testMetrics = aggregateMetrics(resultsByCompany, fold.test)
+    trainTotals = {
+      ndcg: trainTotals.ndcg + trainMetrics.ndcg,
+      mrr: trainTotals.mrr + trainMetrics.mrr,
+      precision: trainTotals.precision + trainMetrics.precision,
+      top1: trainTotals.top1 + trainMetrics.top1,
+    }
+    testTotals = {
+      ndcg: testTotals.ndcg + testMetrics.ndcg,
+      mrr: testTotals.mrr + testMetrics.mrr,
+      precision: testTotals.precision + testMetrics.precision,
+      top1: testTotals.top1 + testMetrics.top1,
+    }
+  }
+
+  const foldCount = folds.length || 1
+  const trainMetrics: EvalMetrics = {
+    ndcg: trainTotals.ndcg / foldCount,
+    mrr: trainTotals.mrr / foldCount,
+    precision: trainTotals.precision / foldCount,
+    top1: trainTotals.top1 / foldCount,
+  }
+  const testMetrics: EvalMetrics = {
+    ndcg: testTotals.ndcg / foldCount,
+    mrr: testTotals.mrr / foldCount,
+    precision: testTotals.precision / foldCount,
+    top1: testTotals.top1 / foldCount,
+  }
+
+  const failures = collectFailures(
+    resultsByCompany,
+    folds[0]?.train ?? companies,
+    8
+  )
+  const errorSummary = summarizeFailures(failures)
 
   return {
     prompt: promptTemplate,
-    query,
-    trainMetrics: trainEval.metrics,
-    testMetrics: testEval.metrics,
-    failures: trainEval.failures,
+    query: personaQuery,
+    trainMetrics,
+    testMetrics,
+    failures,
     errorSummary,
   }
 }
@@ -576,12 +944,14 @@ async function generateCandidatePrompts(
     : ""
 
   const promptParts = [
-    "You are optimizing a prompt template used to rewrite a persona spec into a concise query.",
+    "You are optimizing a ranking prompt template that scores leads for outbound sales.",
     `The objective is to maximize ${objective.toUpperCase()} on a lead-ranking evaluation set.`,
-    `Return JSON only: {\"prompts\": [\"...\"]}.`,
-    `Each prompt must include the placeholder ${PERSONA_SPEC_PLACEHOLDER}.`,
-    "Each prompt must instruct the model to output only the rewritten query text, no bullets or extra commentary.",
-    "Avoid Markdown or code fences. Keep prompts under 1200 characters.",
+    "Return JSON only: {\"prompts\": [\"...\"]}.",
+    `Each prompt must include placeholders: ${Object.values(
+      RANKING_PROMPT_PLACEHOLDERS
+    ).join(", ")}.`,
+    "Each prompt must instruct the model to output only a JSON array of scores.",
+    "Avoid Markdown or code fences. Keep prompts under 1500 characters.",
     "Generate distinct prompts that improve on the top performers.",
     "",
     "Top prompts so far:",
@@ -608,11 +978,17 @@ async function generateCandidatePrompts(
     model: optimizerModel,
     prompt,
   })
+  recordUsage(result)
 
   const text = result.text.trim()
   const jsonMatch = text.match(/\{[\s\S]*\}/)
   if (!jsonMatch) {
     console.warn("Optimizer did not return JSON. Skipping this round.")
+    if (debug) {
+      console.log("[debug] Optimizer raw response:")
+      console.log(text.slice(0, 800))
+      console.log("[debug] End optimizer raw response")
+    }
     return []
   }
 
@@ -634,14 +1010,19 @@ async function generateCandidatePrompts(
     return cleaned
   } catch {
     console.warn("Failed to parse optimizer JSON. Skipping this round.")
+    if (debug) {
+      console.log("[debug] Optimizer raw response:")
+      console.log(text.slice(0, 800))
+      console.log("[debug] End optimizer raw response")
+    }
     return []
   }
 }
 
 function isTemplatePrompt(promptTemplate: string) {
-  return (
-    promptTemplate !== DIRECT_PROMPT &&
-    promptTemplate.includes(PERSONA_SPEC_PLACEHOLDER)
+  if (promptTemplate === DIRECT_QUERY) return false
+  return Object.values(RANKING_PROMPT_PLACEHOLDERS).every((placeholder) =>
+    promptTemplate.includes(placeholder)
   )
 }
 
@@ -664,7 +1045,7 @@ function formatMetrics(metrics: EvalMetrics) {
 const evalCsv = fs.readFileSync(evalPath, "utf8")
 const allCompanies = parseEvalSet(evalCsv)
 const companies = sampleCompanies(allCompanies)
-const { train: trainCompanies, test: testCompanies } = splitCompanies(companies)
+const folds = buildFolds(companies, foldsInput)
 
 const totalDocuments = companies.reduce(
   (sum, company) => sum + company.leads.length,
@@ -674,42 +1055,38 @@ const totalDocuments = companies.reduce(
 const estimatedPromptEvaluations =
   2 + Math.max(0, rounds - 1) * (candidatesPerRound + mutationsPerRound)
 
-const cohereCostPer1kSearches = Number.parseFloat(
-  process.env.COHERE_RERANK_COST_PER_1K_SEARCHES ?? ""
-)
-
-let rerankCostPerPrompt = 0
-if (Number.isFinite(cohereCostPer1kSearches)) {
-  rerankCostPerPrompt = (companies.length / 1000) * cohereCostPer1kSearches
-}
-
-const estimatedRerankCost = rerankCostPerPrompt * estimatedPromptEvaluations
-const estimatedTotalCost = estimatedRerankCost
+const estimatedTotalCost = 0
 
 console.log(
   `Loaded ${allCompanies.length} companies (evaluating ${companies.length}).`
 )
 console.log(
-  `Query model: ${queryModelId} | Optimizer model: ${optimizerModelId} | Rerank model: ${rerankModelId}`
+  `Query model: ${queryModelId} | Optimizer model: ${optimizerModelId} | Rank model: ${rankModelId}`
 )
-console.log(
-  `Train/test split: ${trainCompanies.length}/${testCompanies.length} (ratio ${Number.isFinite(trainRatioInput) ? trainRatioInput : 0.8})`
-)
+const foldTestSizes = folds.map((fold) => fold.test.length)
+const foldTrainSizes = folds.map((fold) => fold.train.length)
+const foldSummary = foldTestSizes
+  .map((testSize, index) => `${foldTrainSizes[index]}/${testSize}`)
+  .join(", ")
+console.log(`K-fold split: k=${folds.length} (train/test per fold: ${foldSummary})`)
 console.log(
   `Estimated evaluations: ${estimatedPromptEvaluations} prompts | ${companies.length} companies | ${totalDocuments} total documents`
 )
+console.log(
+  `Scoring concurrency: ${Math.max(1, Math.min(concurrencyInput, companies.length || 1))}`
+)
 
-if (rerankCostPerPrompt > 0) {
-  console.log(
-    `Estimated rerank cost: $${estimatedRerankCost.toFixed(2)} (OpenRouter not estimated)`
-  )
-} else {
-  console.log(
-    "Estimated costs: set COHERE_RERANK_COST_PER_1K_SEARCHES to estimate rerank spend."
-  )
-}
+console.log(
+  "Estimated costs: OpenRouter spend not estimated (actual usage printed at end if enabled)."
+)
 
-if (Number.isFinite(budgetUsd) && budgetUsd > 0 && estimatedTotalCost > budgetUsd && !forceRun) {
+if (
+  Number.isFinite(budgetUsd) &&
+  budgetUsd > 0 &&
+  estimatedTotalCost > 0 &&
+  estimatedTotalCost > budgetUsd &&
+  !forceRun
+) {
   console.error(
     `Estimated cost $${estimatedTotalCost.toFixed(2)} exceeds budget $${budgetUsd.toFixed(2)}.`
   )
@@ -724,11 +1101,6 @@ if (dryRun) {
   process.exit(0)
 }
 
-if (!process.env.COHERE_API_KEY) {
-  console.error("Missing COHERE_API_KEY for reranking.")
-  process.exit(1)
-}
-
 if (!process.env.OPENROUTER_API_KEY) {
   console.error("Missing OPENROUTER_API_KEY for prompt optimization.")
   process.exit(1)
@@ -737,6 +1109,7 @@ if (!process.env.OPENROUTER_API_KEY) {
 // OpenRouter SDK types don't fully match AI SDK v6 yet, but runtime is compatible
 const queryModelRaw = getOpenRouterModel(queryModelId)
 const optimizerModelRaw = getOpenRouterModel(optimizerModelId)
+const rankModelRaw = getOpenRouterModel(rankModelId)
 
 if (!queryModelRaw) {
   console.error("Unable to create OpenRouter model for query generation.")
@@ -748,22 +1121,51 @@ if (!optimizerModelRaw) {
   process.exit(1)
 }
 
+if (!rankModelRaw) {
+  console.error("Unable to create OpenRouter model for lead scoring.")
+  process.exit(1)
+}
+
+if ((rankModelRaw as { specificationVersion?: string }).specificationVersion === "v2") {
+  console.log("[ai-sdk] OpenRouter model running in v2 compatibility mode.")
+}
+
 queryModel = queryModelRaw as unknown as GenerateTextModel
 optimizerModel = optimizerModelRaw as unknown as GenerateTextModel
+rankModel = rankModelRaw as unknown as GenerateTextModel
 
 const evaluations = new Map<string, PromptEvaluation>()
+
+const personaQueryPromptTemplate =
+  (await getActivePersonaQueryPrompt()) ?? DEFAULT_PERSONA_QUERY_PROMPT
+const personaQuery = await buildQuery(personaQueryPromptTemplate)
 
 async function getEvaluation(promptTemplate: string) {
   const cached = evaluations.get(promptTemplate)
   if (cached) return cached
+
+  if (!isPromptValid(promptTemplate)) {
+    console.warn(
+      "Skipping invalid ranking prompt (missing required placeholders)."
+    )
+    return {
+      prompt: promptTemplate,
+      query: personaQuery,
+      trainMetrics: { ndcg: 0, mrr: 0, precision: 0, top1: 0 },
+      testMetrics: { ndcg: 0, mrr: 0, precision: 0, top1: 0 },
+      failures: [],
+      errorSummary: "Invalid ranking prompt template.",
+    }
+  }
 
   console.log("\nEvaluating prompt:")
   console.log(promptTemplate)
 
   const evaluation = await evaluatePrompt(
     promptTemplate,
-    trainCompanies,
-    testCompanies
+    personaQuery,
+    folds,
+    companies
   )
   evaluations.set(promptTemplate, evaluation)
 
@@ -773,13 +1175,13 @@ async function getEvaluation(promptTemplate: string) {
   return evaluation
 }
 
-const baselinePrompts = [DEFAULT_PERSONA_QUERY_PROMPT, DIRECT_PROMPT]
+const baselinePrompts = [DEFAULT_RANKING_PROMPT]
 
 for (const promptTemplate of baselinePrompts) {
   await getEvaluation(promptTemplate)
 }
 
-let population = [DEFAULT_PERSONA_QUERY_PROMPT]
+let population = [DEFAULT_RANKING_PROMPT]
 
 for (let round = 0; round < rounds; round += 1) {
   console.log(`\nRound ${round + 1} of ${rounds}`)
@@ -859,18 +1261,8 @@ console.log(best.prompt)
 console.log(
   `Best train metrics: ${formatMetrics(best.trainMetrics)} | Best test metrics: ${formatMetrics(best.testMetrics)}`
 )
-console.log("Generated query:")
+console.log("Persona rubric used:")
 console.log(best.query)
-
-const directBaseline = evaluations.get(DIRECT_PROMPT)
-if (directBaseline) {
-  console.log("\nDirect persona baseline:")
-  console.log(
-    `Train metrics: ${formatMetrics(directBaseline.trainMetrics)} | Test metrics: ${formatMetrics(directBaseline.testMetrics)}`
-  )
-  console.log("Generated query:")
-  console.log(directBaseline.query)
-}
 
 const leaderboardEntries: PromptLeaderboardEntry[] = finalScored
   .slice(0, 20)
@@ -889,14 +1281,11 @@ const leaderboard: PromptLeaderboard = {
   updatedAt: new Date().toISOString(),
   queryModelId,
   optimizerModelId,
-  rerankModelId,
+  rankModelId,
   evalPath,
   personaPath,
   entries: leaderboardEntries,
 }
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-const serviceRoleKey = process.env.SUPABASE_SERVICE_KEY
 
 if (supabaseUrl && serviceRoleKey) {
   const supabase = createClient(supabaseUrl, serviceRoleKey, {
@@ -916,4 +1305,19 @@ if (supabaseUrl && serviceRoleKey) {
   console.warn(
     "Skipping prompt leaderboard write (missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_KEY)."
   )
+}
+
+if (usageTotals.calls > 0) {
+  const totalTokens =
+    usageTotals.totalTokens || usageTotals.inputTokens + usageTotals.outputTokens
+  const costLabel =
+    usageTotals.cost > 0 ? `${usageTotals.cost.toFixed(4)} credits` : "not available"
+  console.log(
+    `\nActual usage: calls=${usageTotals.calls} input_tokens=${usageTotals.inputTokens} output_tokens=${usageTotals.outputTokens} total_tokens=${totalTokens} cost=${costLabel}`
+  )
+  if (usageTotals.missingCost > 0) {
+    console.log(
+      `Cost missing for ${usageTotals.missingCost} call(s). Enable OpenRouter usage accounting to include cost.`
+    )
+  }
 }

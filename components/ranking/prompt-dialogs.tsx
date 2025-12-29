@@ -29,10 +29,10 @@ export function ActivePromptDialog({
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
       <DialogContent className="bg-card text-card-foreground max-w-[calc(100%-2rem)] w-[95vw] text-sm sm:max-w-3xl">
         <DialogHeader>
-          <DialogTitle>Active prompt template</DialogTitle>
-          <DialogDescription>
-            This prompt is stored in the database and used for persona-to-query rewriting.
-          </DialogDescription>
+        <DialogTitle>Active ranking prompt template</DialogTitle>
+        <DialogDescription>
+            This prompt is stored in the database and used for lead scoring during ranking.
+        </DialogDescription>
         </DialogHeader>
         {isLoading ? (
           <div className="space-y-3">
@@ -87,4 +87,3 @@ export function LeaderboardPromptDialog({
     </Dialog>
   )
 }
-

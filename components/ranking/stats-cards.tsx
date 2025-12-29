@@ -84,7 +84,7 @@ export function StatsCards({ stats, isLoading }: StatsCardsProps) {
           </CardTitle>
         </CardHeader>
         <CardContent className="text-secondary-foreground/80 text-xs">
-          {formatNumber(stats.totals.documents)} documents reranked
+          {formatNumber(stats.totals.documents)} documents scored
         </CardContent>
       </Card>
       <Card className="border-secondary bg-secondary text-secondary-foreground ring-secondary/30">
@@ -103,4 +103,3 @@ export function StatsCards({ stats, isLoading }: StatsCardsProps) {
     </section>
   )
 }
-

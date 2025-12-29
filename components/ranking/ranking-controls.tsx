@@ -155,7 +155,7 @@ export function RankingControls({
                   </button>
                 </TooltipTrigger>
                 <TooltipContent side="top" className="max-w-xs">
-                  Minimum rerank score required to mark a lead as relevant. Only
+                  Minimum model score required to mark a lead as relevant. Only
                   relevant leads count toward Top N.
                 </TooltipContent>
               </Tooltip>
@@ -209,4 +209,3 @@ export function RankingControls({
     </Card>
   )
 }
-

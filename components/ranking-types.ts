@@ -98,7 +98,7 @@ export type PromptLeaderboard = {
   updatedAt: string | null
   queryModelId?: string | null
   optimizerModelId?: string | null
-  rerankModelId?: string | null
+  rankModelId?: string | null
   evalPath?: string | null
   personaPath?: string | null
   entries: PromptLeaderboardEntry[]

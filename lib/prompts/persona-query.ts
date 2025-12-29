@@ -1,10 +1,15 @@
 const PERSONA_SPEC_PLACEHOLDER = "{{persona_spec}}"
 
 export const DEFAULT_PERSONA_QUERY_PROMPT = [
-  "You are helping rank company contacts for outbound sales.",
-  "Rewrite the persona spec into a concise, single-paragraph query that",
-  "describes the ideal contact and explicit disqualifiers.",
-  "Return only the query text, no bullets.",
+  "You are creating a detailed scoring rubric for ranking outbound sales leads.",
+  "Rewrite the persona spec into a full, explicit rubric that covers:",
+  "- Required functions, seniority levels, titles, industries, geographies",
+  "- Clear disqualifiers and hard exclusions",
+  "- Positive signals and strong-fit indicators",
+  "- Optional/nice-to-have signals",
+  "- How to score (what deserves 0.9+ vs 0.5 vs 0.1)",
+  "Be explicit and verbose. Use plain text with clear sections.",
+  "Return only the rubric, no JSON or bullets outside the rubric itself.",
   "",
   `Persona spec:\n${PERSONA_SPEC_PLACEHOLDER}`,
 ].join("\n")

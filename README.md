@@ -27,7 +27,7 @@ You can also ingest + run directly from the UI (Ranking Controls section).
 
 ### Prompt optimization
 
-Use the evaluation set in `context/` to automatically improve the persona-to-query prompt.
+Use the evaluation set in `context/` to automatically improve the **ranking prompt** (lead scoring).
 This follows the "Automatic Prompt Optimization" (APO) approach from the reference article with a **beam search** loop, **prompt mutation operators**
 (heuristic mutations), and **LLM-generated candidate prompts** (meta-prompting). We use a **company-level train/test split** to avoid leakage and
 score candidates with **ranking metrics** (NDCG/MRR/precision/top1). The top prompts are stored in `prompt_leaderboards` and shown in the UI.
@@ -82,8 +82,8 @@ bun run test
 - **Reason column**: the reason column is provided by heuristics instead of LLMs to reduce costs.
 - **Realtime updates**: we are using SSE since we are only reading (not writing), discarding WebSockets.
 - **Reusable pipeline**: ranking runs are stored independently, so future CSVs can be ingested and re-ranked without changing code.
-- **AI providers**: OpenRouter for persona summarization (usage-based cost capture when enabled), Cohere Rerank for deterministic ranking.
-- **Ranking system**: we are currently using AI ranking (Cohere's rerank-3.5 model using the latest AI SDK v6). AI ranking was decided by:
+- **AI providers**: OpenRouter for persona summarization and lead scoring/ranking (usage-based cost capture when enabled).
+- **Ranking system**: we are currently using AI ranking with a standard LLM (OpenRouter `openai/gpt-oss-120b` by default). AI ranking was decided by:
   1. Task recommendation
   2. Time and money (the best recommendation algorithms are tailored ML models; I have experience with this but it requires a budget and more time. Fine-tuning an existing OS ranking model on our data is also the best alternative option for faster deployment).
 
