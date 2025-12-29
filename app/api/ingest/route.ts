@@ -13,7 +13,7 @@ export const runtime = "nodejs"
 export async function POST(request: Request) {
   // Apply rate limiting
   const clientId = getClientIdentifier(request)
-  const rateLimitResult = checkRateLimit(
+  const rateLimitResult = await checkRateLimit(
     `ingest:${clientId}`,
     RATE_LIMITS.ingest
   )

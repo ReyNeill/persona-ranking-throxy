@@ -1,13 +1,13 @@
+import { createSupabaseServerClientOptional } from "@/lib/supabase/server"
+
 /**
- * Simple in-memory rate limiter using a sliding window algorithm.
+ * Simple rate limiter with a Supabase-backed store and in-memory fallback.
  *
- * note: this implementation is intentionally simple for demonstration purposes.
- * for production at scale, i'd use something like Redis, etc.
+ * Production behavior:
+ * - Uses Postgres as a shared store (serverless-safe).
  *
- * Limitations:
- * - State is lost on server restart
- * - Not suitable for multi-instance deployments without sticky sessions
- * - Memory grows with unique identifiers (IPs) until cleanup
+ * Fallback behavior:
+ * - Uses in-memory state when Supabase isn't configured.
  */
 
 type RateLimitEntry = {
@@ -59,7 +59,7 @@ export type RateLimitResult = {
  * @param config - Rate limit configuration
  * @returns Result indicating if request is allowed and remaining quota
  */
-export function checkRateLimit(
+function checkRateLimitInMemory(
   identifier: string,
   config: RateLimitConfig
 ): RateLimitResult {
@@ -101,6 +101,57 @@ export function checkRateLimit(
   }
 }
 
+let warnedSupabaseError = false
+
+/**
+ * Check if a request is within rate limits.
+ *
+ * Falls back to in-memory if Supabase isn't configured or the RPC fails.
+ */
+export async function checkRateLimit(
+  identifier: string,
+  config: RateLimitConfig
+): Promise<RateLimitResult> {
+  const supabase = createSupabaseServerClientOptional()
+
+  if (supabase) {
+    const { data, error } = await supabase.rpc("check_rate_limit", {
+      p_key: identifier,
+      p_window_ms: config.windowMs,
+    })
+
+    if (!error && data) {
+      const row = Array.isArray(data) ? data[0] : data
+      const count = Number(row?.count)
+      const resetTimeValue = row?.reset_time
+      const resetTimeMs =
+        typeof resetTimeValue === "string"
+          ? new Date(resetTimeValue).getTime()
+          : Number.NaN
+
+      if (Number.isFinite(count) && Number.isFinite(resetTimeMs)) {
+        const remaining = Math.max(0, config.limit - count)
+        return {
+          success: count <= config.limit,
+          limit: config.limit,
+          remaining,
+          resetTime: resetTimeMs,
+        }
+      }
+    }
+
+    if (!warnedSupabaseError) {
+      warnedSupabaseError = true
+      console.warn(
+        "[rate-limit] Falling back to in-memory limiter; Supabase RPC failed.",
+        error?.message ?? error
+      )
+    }
+  }
+
+  return checkRateLimitInMemory(identifier, config)
+}
+
 /**
  * Get client identifier from request headers.
  * Attempts to use X-Forwarded-For for proxied requests, falls back to a default.
@@ -132,4 +183,3 @@ export const RATE_LIMITS = {
     windowMs: 60 * 1000, // 5 uploads per minute
   },
 } as const
-

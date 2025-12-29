@@ -16,7 +16,7 @@ export async function handleRankStreamRequest(
 ) {
   // Apply rate limiting
   const clientId = getClientIdentifier(request)
-  const rateLimitResult = checkRateLimit(
+  const rateLimitResult = await checkRateLimit(
     `ranking:${clientId}`,
     RATE_LIMITS.ranking
   )

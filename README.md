@@ -89,16 +89,15 @@ bun run test
 
 ## Rate limiting
 
-The API includes in-memory rate limiting for expensive operations:
+The API includes rate limiting for expensive operations:
 
 - **Ranking** (`/api/rank/stream`): 10 requests per minute per IP
 - **CSV upload** (`/api/ingest`): 5 requests per minute per IP
 
-**Why in-memory instead of Redis?** This is a technical assessment, so I chose a simpler in-memory solution intentionally:
+**How it works**:
 
-1. **Single-instance deployment**: The app runs on a single Vercel serverless function instance for this demo, making distributed state unnecessary.
-2. **Zero external dependencies**: No need to provision something like Redis or Upstash for a task submission.
-3. **Demonstrates the pattern**: The code structure (`lib/rate-limit.ts`) follows production patterns and can be easily swapped for Redis-based rate limiting (e.g., Upstash) by replacing the storage layer.
+1. **Supabase-backed in production**: rate limits are stored in Postgres via the `check_rate_limit` RPC, which is safe for serverless and multi-instance deployments.
+2. **In-memory fallback for local dev**: when Supabase env vars aren’t set, the limiter falls back to an in-memory store to keep setup friction low.
 
 ## Scope decisions (intentional)
 
