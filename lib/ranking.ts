@@ -138,10 +138,12 @@ function formatLeadText(lead: LeadRow) {
     process.env.INCLUDE_EMPLOYEE_RANGE === "true"
       ? extractEmployeeRange(lead.data)
       : null
+  const industry = extractIndustry(lead.data)
   const parts = [
     lead.full_name ? `Name: ${lead.full_name}` : null,
     lead.title ? `Title: ${lead.title}` : null,
     `Company: ${lead.company.name}`,
+    industry ? `Industry: ${industry}` : null,
     employeeRange ? `Employee Range: ${employeeRange}` : null,
     lead.email ? `Email: ${lead.email}` : null,
     lead.linkedin_url ? `LinkedIn: ${lead.linkedin_url}` : null,
@@ -156,6 +158,8 @@ function extractEmployeeRange(data?: Record<string, unknown> | null) {
     "employee range",
     "employee_range",
     "employeeRange",
+    "account_employee_range",
+    "account employee range",
     "employees",
     "employee count",
     "employee_count",
@@ -164,6 +168,22 @@ function extractEmployeeRange(data?: Record<string, unknown> | null) {
     const value = data[key]
     if (typeof value === "string" && value.trim()) return value.trim()
     if (typeof value === "number") return value.toString()
+  }
+  return null
+}
+
+function extractIndustry(data?: Record<string, unknown> | null) {
+  if (!data) return null
+  const keys = [
+    "industry",
+    "account_industry",
+    "account industry",
+    "company_industry",
+    "company industry",
+  ]
+  for (const key of keys) {
+    const value = data[key]
+    if (typeof value === "string" && value.trim()) return value.trim()
   }
   return null
 }
@@ -221,12 +241,17 @@ function buildHeuristicReason({
   companyName,
   personaSpec,
   isRelevant,
+  shortlisted = true,
 }: {
   title: string | null
   companyName: string
   personaSpec: string
   isRelevant: boolean
+  shortlisted?: boolean
 }) {
+  if (!shortlisted) {
+    return "Not in shortlist; below heuristic threshold."
+  }
   const titleNorm = normalizeText(title ?? "")
   const combinedNorm = normalizeText(`${title ?? ""} ${companyName}`)
 
@@ -279,7 +304,15 @@ function buildHeuristicReason({
 
 type LeadScoreItem = {
   index: number
-  score: number
+  score?: number
+  final?: number
+  scores?: {
+    role?: number
+    seniority?: number
+    industry?: number
+    size?: number
+    data_quality?: number
+  }
 }
 
 function getResponseHealingOptions() {
@@ -314,6 +347,145 @@ function clampScore(value: number) {
   return Math.max(0, Math.min(1, value))
 }
 
+function clampAxis(value: number) {
+  if (!Number.isFinite(value)) return 0
+  return Math.max(0, Math.min(5, value))
+}
+
+function computeFinalScore(axes?: LeadScoreItem["scores"]) {
+  if (!axes) return null
+  const values = [
+    axes.role,
+    axes.seniority,
+    axes.industry,
+    axes.size,
+    axes.data_quality,
+  ]
+  let sum = 0
+  let seen = false
+  for (const value of values) {
+    if (Number.isFinite(value)) {
+      sum += clampAxis(value as number)
+      seen = true
+    } else {
+      sum += 0
+    }
+  }
+  if (!seen) return null
+  return clampScore(sum / 25)
+}
+
+type ShortlistEntry = {
+  lead: LeadRow
+  originalIndex: number
+  score: number
+  quality: number
+}
+
+type ShortlistScorer = {
+  targetPhrases: Phrase[]
+  avoidPhrases: Phrase[]
+  preferPhrases: Phrase[]
+  seniorityPhrases: Phrase[]
+}
+
+function parsePositiveInt(value: string | undefined, fallback: number) {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback
+  return Math.floor(parsed)
+}
+
+const SHORTLIST_MULTIPLIER = parsePositiveInt(
+  process.env.RANKING_SHORTLIST_MULTIPLIER,
+  8
+)
+const SHORTLIST_MIN = parsePositiveInt(process.env.RANKING_SHORTLIST_MIN, 20)
+const SHORTLIST_MAX = parsePositiveInt(process.env.RANKING_SHORTLIST_MAX, 200)
+const RERANK_PASSES = parsePositiveInt(process.env.RANKING_PASSES, 2)
+
+function buildShortlistScorer(personaSpec: string): ShortlistScorer {
+  return {
+    targetPhrases: buildPhraseList(
+      extractPersonaPhrases(personaSpec, "Target")
+    ),
+    avoidPhrases: buildPhraseList(extractPersonaPhrases(personaSpec, "Avoid")),
+    preferPhrases: buildPhraseList(
+      extractPersonaPhrases(personaSpec, "Prefer")
+    ),
+    seniorityPhrases: buildPhraseList(SENIORITY_KEYWORDS),
+  }
+}
+
+function scoreLeadForShortlist(lead: LeadRow, scorer: ShortlistScorer) {
+  const titleNorm = normalizeText(lead.title ?? "")
+  const industry = extractIndustry(lead.data)
+  const combinedNorm = normalizeText(
+    `${lead.title ?? ""} ${lead.company.name} ${industry ?? ""}`
+  )
+
+  const targetMatch = findPhraseMatch(scorer.targetPhrases, titleNorm)
+  const avoidMatch = findPhraseMatch(scorer.avoidPhrases, titleNorm)
+  const preferMatch = findPhraseMatch(scorer.preferPhrases, combinedNorm)
+  const seniorityMatch = findPhraseMatch(scorer.seniorityPhrases, titleNorm)
+
+  let score = 0
+  if (targetMatch) score += 6
+  if (seniorityMatch) score += 2
+  if (preferMatch) score += 1
+  if (avoidMatch) score -= 6
+
+  const quality = leadQualityScore({
+    fullName: lead.full_name,
+    title: lead.title,
+    email: lead.email,
+    linkedinUrl: lead.linkedin_url,
+  })
+
+  score += quality * 0.1
+
+  return { score, quality }
+}
+
+function buildShortlist(leads: LeadRow[], personaSpec: string, topN: number) {
+  if (leads.length === 0) {
+    return {
+      entries: [] as ShortlistEntry[],
+      shortlistScores: [] as number[],
+      shortlistedIndices: new Set<number>(),
+    }
+  }
+
+  const computedLimit = Math.max(SHORTLIST_MIN, topN * SHORTLIST_MULTIPLIER)
+  const shortlistLimit = Math.min(leads.length, SHORTLIST_MAX, computedLimit)
+
+  const scorer = buildShortlistScorer(personaSpec)
+  const scored = leads.map((lead, index) => {
+    const { score, quality } = scoreLeadForShortlist(lead, scorer)
+    return { lead, originalIndex: index, score, quality }
+  })
+
+  const shortlistScores = scored.map((entry) => entry.score)
+
+  if (leads.length <= shortlistLimit) {
+    return {
+      entries: scored,
+      shortlistScores,
+      shortlistedIndices: new Set(scored.map((entry) => entry.originalIndex)),
+    }
+  }
+
+  const sorted = [...scored].sort((a, b) => {
+    if (a.score !== b.score) return b.score - a.score
+    if (a.quality !== b.quality) return b.quality - a.quality
+    return a.originalIndex - b.originalIndex
+  })
+
+  const entries = sorted.slice(0, shortlistLimit)
+  const shortlistedIndices = new Set(entries.map((entry) => entry.originalIndex))
+
+  return { entries, shortlistScores, shortlistedIndices }
+}
+
 function extractJsonPayload(text: string): string | null {
   const fencedMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/i)
   const content = fencedMatch ? fencedMatch[1] : text
@@ -333,8 +505,11 @@ function extractJsonPayload(text: string): string | null {
 function parseLeadScores(
   text: string,
   count: number
-): { scores: number[]; parsedCount: number } {
-  const scores = Array.from({ length: count }, () => 0)
+): { scores: Array<number | null>; parsedCount: number } {
+  const scores: Array<number | null> = Array.from(
+    { length: count },
+    (): number | null => null
+  )
   let parsedCount = 0
   const payload = extractJsonPayload(text)
   if (!payload) return { scores, parsedCount }
@@ -358,8 +533,16 @@ function parseLeadScores(
     if (!item || typeof item !== "object") continue
     const typed = item as Partial<LeadScoreItem>
     const index = Number(typed.index)
-    const score = Number(typed.score)
+    const final =
+      Number.isFinite(typed.final) ? Number(typed.final) : undefined
+    const legacyScore =
+      Number.isFinite(typed.score) ? Number(typed.score) : undefined
+    const derived = computeFinalScore(typed.scores)
+    const scoreValue =
+      final ?? legacyScore ?? (derived !== null ? derived : undefined)
+    const score = Number(scoreValue)
     if (!Number.isFinite(index) || index < 0 || index >= count) continue
+    if (!Number.isFinite(score)) continue
     scores[index] = clampScore(score)
     parsedCount += 1
   }
@@ -859,73 +1042,133 @@ export async function runRanking({
         index: completedCompanies + 1,
         total: totalCompanies,
       })
-      const documents = companyLeads.map(formatLeadText)
-      if (documents.length === 0) continue
+      if (companyLeads.length === 0) continue
 
-      const prompt = buildLeadScoringPrompt(activeRankingPrompt, {
-        personaQuery: query,
-        companyName,
-        leads: companyLeads,
-      })
-      let rankResult: Awaited<ReturnType<typeof generateText>>
-      try {
-        rankResult = await generateText({
-          model: rankModel,
-          prompt,
-          output: buildLeadScoreOutput(),
-          providerOptions: getResponseHealingOptions(),
+      const {
+        entries: shortlistEntries,
+        shortlistScores,
+        shortlistedIndices,
+      } = buildShortlist(companyLeads, personaSpec, topN)
+
+      const scoreTotals = Array.from({ length: companyLeads.length }, () => 0)
+      const scoreCounts = Array.from({ length: companyLeads.length }, () => 0)
+      const passCount = Math.max(1, RERANK_PASSES)
+
+      for (let passIndex = 0; passIndex < passCount; passIndex += 1) {
+        const orderedEntries =
+          passIndex === 0
+            ? shortlistEntries
+            : passIndex === 1
+              ? [...shortlistEntries].reverse()
+              : [
+                  ...shortlistEntries.slice(passIndex % shortlistEntries.length),
+                  ...shortlistEntries.slice(
+                    0,
+                    passIndex % shortlistEntries.length
+                  ),
+                ]
+
+        const orderedLeads = orderedEntries.map((entry) => entry.lead)
+        if (orderedLeads.length === 0) continue
+
+        const prompt = buildLeadScoringPrompt(activeRankingPrompt, {
+          personaQuery: query,
+          companyName,
+          leads: orderedLeads,
         })
-      } catch (error) {
-        console.warn(
-          "Lead scoring with structured outputs failed; retrying without response format.",
-          error instanceof Error ? error.message : error
+
+        let rankResult: Awaited<ReturnType<typeof generateText>>
+        try {
+          rankResult = await generateText({
+            model: rankModel,
+            prompt,
+            temperature: 0,
+            output: buildLeadScoreOutput(),
+            providerOptions: getResponseHealingOptions(),
+          })
+        } catch (error) {
+          console.warn(
+            "Lead scoring with structured outputs failed; retrying without response format.",
+            error instanceof Error ? error.message : error
+          )
+          rankResult = await generateText({
+            model: rankModel,
+            prompt,
+            temperature: 0,
+          })
+        }
+
+        const { scores, parsedCount } = parseLeadScores(
+          rankResult.text,
+          orderedLeads.length
         )
-        rankResult = await generateText({
-          model: rankModel,
-          prompt,
+        if (parsedCount === 0) {
+          console.warn(
+            "Lead scoring output could not be parsed; defaulting to zero scores.",
+            { companyId, companyName, passIndex: passIndex + 1 }
+          )
+        } else {
+          scores.forEach((score, localIndex) => {
+            if (score === null) return
+            const originalIndex = orderedEntries[localIndex]?.originalIndex
+            if (originalIndex === undefined) return
+            scoreTotals[originalIndex] += score
+            scoreCounts[originalIndex] += 1
+          })
+        }
+
+        const providerMeta = rankResult.providerMetadata as
+          | OpenRouterUsageMetadata
+          | undefined
+        const openrouterUsage = providerMeta?.openrouter?.usage ?? null
+        const costUsd =
+          typeof openrouterUsage?.cost === "number"
+            ? openrouterUsage.cost
+            : computeGenerationCost(rankResult.usage)
+
+        await recordAiCall(supabase, {
+          run_id: run.id,
+          provider: "openrouter",
+          model: rankResult.response?.modelId ?? DEFAULT_RANK_MODEL,
+          operation: "rank",
+          input_tokens: rankResult.usage?.inputTokens ?? null,
+          output_tokens: rankResult.usage?.outputTokens ?? null,
+          total_tokens: rankResult.usage?.totalTokens ?? null,
+          documents_count: orderedLeads.length,
+          cost_usd: costUsd,
+          metadata: {
+            companyId,
+            companyName: companyLeads[0]?.company.name ?? null,
+            openrouterUsage: openrouterUsage ?? null,
+            pass: passIndex + 1,
+            passes: passCount,
+            shortlistCount: shortlistEntries.length,
+            leadCount: companyLeads.length,
+          },
         })
       }
 
-      const { scores, parsedCount } = parseLeadScores(
-        rankResult.text,
-        companyLeads.length
+      const scores = scoreTotals.map((total, index) =>
+        scoreCounts[index] > 0 ? total / scoreCounts[index] : null
       )
-      if (parsedCount === 0) {
-        console.warn(
-          "Lead scoring output could not be parsed; defaulting to zero scores.",
-          { companyId, companyName }
-        )
-      }
-
-      const providerMeta = rankResult.providerMetadata as
-        | OpenRouterUsageMetadata
-        | undefined
-      const openrouterUsage = providerMeta?.openrouter?.usage ?? null
-      const costUsd =
-        typeof openrouterUsage?.cost === "number"
-          ? openrouterUsage.cost
-          : computeGenerationCost(rankResult.usage)
-
-      await recordAiCall(supabase, {
-        run_id: run.id,
-        provider: "openrouter",
-        model: rankResult.response?.modelId ?? DEFAULT_RANK_MODEL,
-        operation: "rank",
-        input_tokens: rankResult.usage?.inputTokens ?? null,
-        output_tokens: rankResult.usage?.outputTokens ?? null,
-        total_tokens: rankResult.usage?.totalTokens ?? null,
-        documents_count: documents.length,
-        cost_usd: costUsd,
-        metadata: {
-          companyId,
-          companyName: companyLeads[0]?.company.name ?? null,
-          openrouterUsage: openrouterUsage ?? null,
-        },
-      })
 
       const sorted = scores
-        .map((score, index) => ({ score, originalIndex: index }))
-        .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
+        .map((score, index) => ({
+          score,
+          shortlistScore: shortlistScores[index] ?? 0,
+          originalIndex: index,
+        }))
+        .sort((a, b) => {
+          const scoreA = a.score ?? -1
+          const scoreB = b.score ?? -1
+          if (scoreB !== scoreA) {
+            return scoreB - scoreA
+          }
+          if (b.shortlistScore !== a.shortlistScore) {
+            return b.shortlistScore - a.shortlistScore
+          }
+          return a.originalIndex - b.originalIndex
+        })
 
       let relevantRank = 1
       const rankedLeads: RankedLead[] = []
@@ -946,6 +1189,7 @@ export async function runRanking({
           companyName,
           personaSpec,
           isRelevant,
+          shortlisted: shortlistedIndices.has(item.originalIndex),
         })
 
         rankedLeads.push({

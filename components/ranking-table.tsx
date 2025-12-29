@@ -228,7 +228,11 @@ export function RankingTable({
           const label = lead.selected
             ? "Selected"
             : lead.relevance ?? "—"
-          const variant = lead.selected ? "default" : "secondary"
+          const variant = lead.selected
+            ? "default"
+            : lead.relevance === "irrelevant"
+              ? "inverse"
+              : "secondary"
           return <Badge variant={variant}>{label}</Badge>
         },
       },

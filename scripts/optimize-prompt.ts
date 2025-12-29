@@ -249,7 +249,15 @@ function formatLeadText(lead: EvalLead) {
 
 type LeadScoreItem = {
   index: number
-  score: number
+  score?: number
+  final?: number
+  scores?: {
+    role?: number
+    seniority?: number
+    industry?: number
+    size?: number
+    data_quality?: number
+  }
 }
 
 function getResponseHealingOptions() {
@@ -312,6 +320,34 @@ function clampScore(value: number) {
   return Math.max(0, Math.min(1, value))
 }
 
+function clampAxis(value: number) {
+  if (!Number.isFinite(value)) return 0
+  return Math.max(0, Math.min(5, value))
+}
+
+function computeFinalScore(axes?: LeadScoreItem["scores"]) {
+  if (!axes) return null
+  const values = [
+    axes.role,
+    axes.seniority,
+    axes.industry,
+    axes.size,
+    axes.data_quality,
+  ]
+  let sum = 0
+  let seen = false
+  for (const value of values) {
+    if (Number.isFinite(value)) {
+      sum += clampAxis(value as number)
+      seen = true
+    } else {
+      sum += 0
+    }
+  }
+  if (!seen) return null
+  return clampScore(sum / 25)
+}
+
 function extractJsonPayload(text: string): string | null {
   const fencedMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/i)
   const content = fencedMatch ? fencedMatch[1] : text
@@ -331,8 +367,11 @@ function extractJsonPayload(text: string): string | null {
 function parseLeadScores(
   text: string,
   count: number
-): { scores: number[]; parsedCount: number } {
-  const scores = Array.from({ length: count }, () => 0)
+): { scores: Array<number | null>; parsedCount: number } {
+  const scores: Array<number | null> = Array.from(
+    { length: count },
+    (): number | null => null
+  )
   let parsedCount = 0
   const payload = extractJsonPayload(text)
   if (!payload) return { scores, parsedCount }
@@ -356,8 +395,16 @@ function parseLeadScores(
     if (!item || typeof item !== "object") continue
     const typed = item as Partial<LeadScoreItem>
     const index = Number(typed.index)
-    const score = Number(typed.score)
+    const final =
+      Number.isFinite(typed.final) ? Number(typed.final) : undefined
+    const legacyScore =
+      Number.isFinite(typed.score) ? Number(typed.score) : undefined
+    const derived = computeFinalScore(typed.scores)
+    const scoreValue =
+      final ?? legacyScore ?? (derived !== null ? derived : undefined)
+    const score = Number(scoreValue)
     if (!Number.isFinite(index) || index < 0 || index >= count) continue
+    if (!Number.isFinite(score)) continue
     scores[index] = clampScore(score)
     parsedCount += 1
   }
@@ -950,7 +997,7 @@ async function generateCandidatePrompts(
     `Each prompt must include placeholders: ${Object.values(
       RANKING_PROMPT_PLACEHOLDERS
     ).join(", ")}.`,
-    "Each prompt must instruct the model to output only a JSON array of scores.",
+    "Each prompt must instruct the model to output only a JSON array of axis scores with a final 0-1 score per lead.",
     "Avoid Markdown or code fences. Keep prompts under 1500 characters.",
     "Generate distinct prompts that improve on the top performers.",
     "",
@@ -1175,13 +1222,91 @@ async function getEvaluation(promptTemplate: string) {
   return evaluation
 }
 
-const baselinePrompts = [DEFAULT_RANKING_PROMPT]
+const AXIS_PROMPT_STRICT = [
+  "You are ranking company contacts for outbound sales.",
+  "Score each lead on these axes using integers 0-5:",
+  "- role (function/title fit)",
+  "- seniority (seniority fit from title)",
+  "- industry (industry fit when provided)",
+  "- size (company size fit when provided)",
+  "- data_quality (penalize missing/conflicting fields)",
+  "If a lead hits a hard exclusion or avoid rule, set role=0 and final <= 0.1.",
+  "If role is a poor match to the persona, cap final <= 0.3.",
+  "Compute final as the average of the 5 axes scaled to 0-1.",
+  "If key fields are missing, list them in a 'missing' array.",
+  "Return ONLY a JSON array in this format:",
+  '[{"index":0,"final":0.82,"scores":{"role":5,"seniority":4,"industry":3,"size":4,"data_quality":5},"missing":[]}]',
+  "Use every index exactly once. No extra text.",
+  "",
+  "Persona rubric:",
+  RANKING_PROMPT_PLACEHOLDERS.PERSONA_QUERY,
+  "",
+  `Company: ${RANKING_PROMPT_PLACEHOLDERS.COMPANY_NAME}`,
+  "",
+  "Leads:",
+  RANKING_PROMPT_PLACEHOLDERS.LEADS,
+].join("\n")
+
+const AXIS_PROMPT_WEIGHTED = [
+  "You are ranking company contacts for outbound sales.",
+  "Score each lead on these axes using integers 0-5:",
+  "- role (function/title fit)",
+  "- seniority (seniority fit from title)",
+  "- industry (industry fit when provided)",
+  "- size (company size fit when provided)",
+  "- data_quality (penalize missing/conflicting fields)",
+  "Compute final with heavier weight on role and seniority:",
+  "final = (role*2 + seniority*2 + industry + size + data_quality) / 35.",
+  "If key fields are missing, list them in a 'missing' array.",
+  "Return ONLY a JSON array in this format:",
+  '[{"index":0,"final":0.82,"scores":{"role":5,"seniority":4,"industry":3,"size":4,"data_quality":5},"missing":[]}]',
+  "Use every index exactly once. No extra text.",
+  "",
+  "Persona rubric:",
+  RANKING_PROMPT_PLACEHOLDERS.PERSONA_QUERY,
+  "",
+  `Company: ${RANKING_PROMPT_PLACEHOLDERS.COMPANY_NAME}`,
+  "",
+  "Leads:",
+  RANKING_PROMPT_PLACEHOLDERS.LEADS,
+].join("\n")
+
+const AXIS_PROMPT_CONSERVATIVE = [
+  "You are ranking company contacts for outbound sales.",
+  "Score each lead on these axes using integers 0-5:",
+  "- role (function/title fit)",
+  "- seniority (seniority fit from title)",
+  "- industry (industry fit when provided)",
+  "- size (company size fit when provided)",
+  "- data_quality (penalize missing/conflicting fields)",
+  "Be conservative: missing title, industry, or employee range should reduce data_quality.",
+  "Compute final as the average of the 5 axes scaled to 0-1.",
+  "If key fields are missing, list them in a 'missing' array.",
+  "Return ONLY a JSON array in this format:",
+  '[{"index":0,"final":0.82,"scores":{"role":5,"seniority":4,"industry":3,"size":4,"data_quality":5},"missing":[]}]',
+  "Use every index exactly once. No extra text.",
+  "",
+  "Persona rubric:",
+  RANKING_PROMPT_PLACEHOLDERS.PERSONA_QUERY,
+  "",
+  `Company: ${RANKING_PROMPT_PLACEHOLDERS.COMPANY_NAME}`,
+  "",
+  "Leads:",
+  RANKING_PROMPT_PLACEHOLDERS.LEADS,
+].join("\n")
+
+const baselinePrompts = [
+  DEFAULT_RANKING_PROMPT,
+  AXIS_PROMPT_STRICT,
+  AXIS_PROMPT_WEIGHTED,
+  AXIS_PROMPT_CONSERVATIVE,
+]
 
 for (const promptTemplate of baselinePrompts) {
   await getEvaluation(promptTemplate)
 }
 
-let population = [DEFAULT_RANKING_PROMPT]
+let population = [...baselinePrompts]
 
 for (let round = 0; round < rounds; round += 1) {
   console.log(`\nRound ${round + 1} of ${rounds}`)

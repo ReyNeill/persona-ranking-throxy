@@ -161,8 +161,21 @@ function createSupabaseStub({
           select: () => ({
             eq: () => ({
               single: async () => ({
-                data: { persona_query_prompt: prompt },
+                data: { persona_query_prompt: prompt, ranking_prompt: null },
                 error: null,
+              }),
+            }),
+          }),
+        }
+      }
+
+      if (table === "prompt_leaderboards") {
+        return {
+          select: () => ({
+            eq: () => ({
+              single: async () => ({
+                data: null,
+                error: { message: "Not found" },
               }),
             }),
           }),
@@ -285,7 +298,7 @@ describe("runRanking", () => {
     expect(beta?.leads[0]?.selected).toBe(true)
 
     expect(supabaseStub.calls.leadRankings.length).toBe(3)
-    expect(supabaseStub.calls.aiCalls.length).toBe(3)
+    expect(supabaseStub.calls.aiCalls.length).toBe(5)
   })
 })
 

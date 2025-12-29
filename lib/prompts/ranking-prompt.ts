@@ -6,9 +6,16 @@ const RANKING_PROMPT_PLACEHOLDERS = {
 
 export const DEFAULT_RANKING_PROMPT = [
   "You are ranking company contacts for outbound sales.",
-  "Score each lead from 0 to 1 based on the persona rubric (1 = perfect fit, 0 = not a fit).",
+  "Score each lead on these axes using integers 0-5:",
+  "- role (function/title fit)",
+  "- seniority (seniority fit from title)",
+  "- industry (industry fit when provided)",
+  "- size (company size fit when provided)",
+  "- data_quality (penalize missing/conflicting fields)",
+  "Compute final as the average of the 5 axes scaled to 0-1.",
+  "If key fields are missing, list them in a 'missing' array.",
   "Return ONLY a JSON array in this format:",
-  '[{"index":0,"score":0.87},{"index":1,"score":0.12}]',
+  '[{"index":0,"final":0.82,"scores":{"role":5,"seniority":4,"industry":3,"size":4,"data_quality":5},"missing":[]}]',
   "Use every index exactly once. No extra text.",
   "",
   "Persona rubric:",
