@@ -133,6 +133,8 @@ const budgetUsd = Number.parseFloat(getArgValue("--budget-usd") ?? "")
 const forceRun = process.argv.includes("--force")
 const dryRun = process.argv.includes("--dry-run")
 const debug = process.argv.includes("--debug")
+const testPromptPath = getArgValue("--test-prompt")
+const testPromptOnly = testPromptPath !== null
 const includeEmployeeRange =
   process.argv.includes("--include-employee-range") ||
   process.env.INCLUDE_EMPLOYEE_RANGE === "true"
@@ -1294,6 +1296,46 @@ const AXIS_PROMPT_CONSERVATIVE = [
   "Leads:",
   RANKING_PROMPT_PLACEHOLDERS.LEADS,
 ].join("\n")
+
+// Handle --test-prompt mode: evaluate a single prompt and exit
+if (testPromptOnly && testPromptPath) {
+  if (!fs.existsSync(testPromptPath)) {
+    console.error(`Test prompt file not found: ${testPromptPath}`)
+    process.exit(1)
+  }
+
+  const testPrompt = fs.readFileSync(testPromptPath, "utf8").trim()
+  console.log("\n=== Testing Single Prompt ===")
+  console.log("Prompt file:", testPromptPath)
+  console.log("Prompt content:")
+  console.log(testPrompt)
+  console.log("\n")
+
+  const evaluation = await getEvaluation(testPrompt)
+
+  console.log("\n=== Results ===")
+  console.log(`Train metrics: ${formatMetrics(evaluation.trainMetrics)}`)
+  console.log(`Test metrics: ${formatMetrics(evaluation.testMetrics)}`)
+  console.log(`Score (${objective}): ${scoreObjective(evaluation.testMetrics).toFixed(4)}`)
+
+  if (evaluation.failures.length > 0) {
+    console.log("\nFailure examples:")
+    for (const failure of evaluation.failures.slice(0, 5)) {
+      console.log(`  - ${failure.company}: expected ${renderLeadLabel(failure.expectedTop)} but got ${renderLeadLabel(failure.predictedTop)}`)
+    }
+  }
+
+  if (evaluation.errorSummary) {
+    console.log("\n" + evaluation.errorSummary)
+  }
+
+  if (usageTotals.calls > 0) {
+    const costLabel = usageTotals.cost > 0 ? `${usageTotals.cost.toFixed(4)} credits` : "not available"
+    console.log(`\nUsage: calls=${usageTotals.calls} tokens=${usageTotals.totalTokens} cost=${costLabel}`)
+  }
+
+  process.exit(0)
+}
 
 const baselinePrompts = [
   DEFAULT_RANKING_PROMPT,

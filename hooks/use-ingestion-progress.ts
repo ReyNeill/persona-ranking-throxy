@@ -24,7 +24,7 @@ type IngestionProgress = {
 }
 
 type UseIngestionProgressOptions = {
-  ingestionId: string | null
+  ingestionId?: string | null
   runId: string | null
 }
 
@@ -48,7 +48,6 @@ const defaultProgress: IngestionProgress = {
 }
 
 export function useIngestionProgress({
-  ingestionId,
   runId,
 }: UseIngestionProgressOptions): UseIngestionProgressReturn {
   const [publicToken, setPublicToken] = React.useState<string | null>(null)
