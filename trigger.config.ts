@@ -1,7 +1,7 @@
 import { defineConfig } from "@trigger.dev/sdk/v3"
 
 export default defineConfig({
-  project: "proj_tatxqfhifplupssiaget", // throxy-pipeline
+  project: "proj_feauvpkaeukugbgrkixn", // mini-rank
   runtime: "node",
   logLevel: "log",
   maxDuration: 600, // 10 minutes for large CSV processing
