@@ -33,7 +33,7 @@ export function RankingClient() {
   })
 
   // Streaming hook
-  const { isRunning, isUploading, error, progress, runRanking } = useRankingStream({
+  const { isRunning, isUploading, error, progress, ingestionProgress, runRanking } = useRankingStream({
     onResults: setResults,
     onLoadingChange: setIsLoadingResults,
     onStatsRefresh: refreshStats,
@@ -183,6 +183,7 @@ export function RankingClient() {
         isRunning={isRunning}
         isUploading={isUploading}
         progress={progress}
+        ingestionProgress={ingestionProgress}
         error={error}
       />
 

@@ -1,0 +1,28 @@
+{
+  "configPath": "/Users/reyneill/Documents/code/persona-ranking-throxy/.trigger/tmp/build-iGHifw/Users/reyneill/Documents/code/persona-ranking-throxy/trigger.config.mjs",
+  "customConditions": [
+  ],
+  "queues": [
+  ],
+  "runtime": "node",
+  "runtimeVersion": "22.14.0",
+  "tasks": [
+    {
+      "entryPoint": "/Users/reyneill/Documents/code/persona-ranking-throxy/.trigger/tmp/build-iGHifw/Users/reyneill/Documents/code/persona-ranking-throxy/trigger/csv-import.mjs",
+      "filePath": "trigger/csv-import.ts",
+      "id": "csv-import",
+      "maxDuration": 600,
+      "retry": {
+        "factor": 2,
+        "maxAttempts": 2,
+        "maxTimeoutInMs": 60000,
+        "minTimeoutInMs": 1000,
+        "randomize": true
+      }
+    }
+  ],
+  "timings": {
+    "trigger/csv-import.ts": 4.980541000000002
+  },
+  "workerEntryPoint": "/Users/reyneill/Documents/code/persona-ranking-throxy/.trigger/tmp/build-iGHifw/private/tmp/bunx-501-trigger.dev@latest/node_modules/trigger.dev/dist/esm/entryPoints/dev-run-worker.mjs"
+}

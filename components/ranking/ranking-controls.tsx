@@ -43,6 +43,17 @@ function pickRandomPersonaSpec() {
   return DEFAULT_PERSONA_SPECS[index]
 }
 
+type IngestionProgress = {
+  status: string
+  processedRows: number
+  totalRows: number
+  percentage: number
+  leadCount: number
+  companyCount: number
+  skippedCount: number
+  currentPhase: string
+}
+
 type RankingControlsProps = {
   onRun: (params: {
     personaSpec: string
@@ -53,6 +64,7 @@ type RankingControlsProps = {
   isRunning: boolean
   isUploading: boolean
   progress: RankingProgress
+  ingestionProgress: IngestionProgress
   error: string | null
 }
 
@@ -61,6 +73,7 @@ export function RankingControls({
   isRunning,
   isUploading,
   progress,
+  ingestionProgress,
   error,
 }: RankingControlsProps) {
   const [personaSpec, setPersonaSpec] = React.useState(() => pickRandomPersonaSpec())
@@ -184,6 +197,28 @@ export function RankingControls({
             </Button>
           </div>
         </div>
+
+        {ingestionProgress.status !== "idle" && ingestionProgress.status !== "completed" ? (
+          <div className="border-border bg-muted/40 grid gap-3 rounded-none border p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+              <span className="font-medium">CSV Import Progress</span>
+              {ingestionProgress.totalRows > 0 ? (
+                <span className="text-muted-foreground">
+                  {ingestionProgress.processedRows.toLocaleString()}/
+                  {ingestionProgress.totalRows.toLocaleString()} rows
+                </span>
+              ) : (
+                <span className="text-muted-foreground">Preparing...</span>
+              )}
+            </div>
+            <Progress value={ingestionProgress.percentage} />
+            {ingestionProgress.currentPhase ? (
+              <p className="text-muted-foreground text-xs">
+                {ingestionProgress.currentPhase}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
 
         {progress.status !== "idle" ? (
           <div className="border-border bg-muted/40 grid gap-3 rounded-none border p-4">

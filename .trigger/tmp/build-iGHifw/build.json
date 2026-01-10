@@ -1,0 +1,108 @@
+{
+  "build": {
+  },
+  "cliPackageVersion": "4.3.2",
+  "config": {
+    "dirs": [
+      "./trigger"
+    ],
+    "project": "proj_tatxqfhifplupssiaget"
+  },
+  "configPath": "/Users/reyneill/Documents/code/persona-ranking-throxy/.trigger/tmp/build-iGHifw/Users/reyneill/Documents/code/persona-ranking-throxy/trigger.config.mjs",
+  "contentHash": "31c223ab96d5f62b5cd2f83bda1eb4b3",
+  "customConditions": [
+  ],
+  "deploy": {
+    "env": {
+    }
+  },
+  "environment": "dev",
+  "externals": [
+    {
+      "name": "import-in-the-middle",
+      "version": "1.11.0"
+    }
+  ],
+  "files": [
+    {
+      "entry": "trigger/csv-import.ts",
+      "out": "/Users/reyneill/Documents/code/persona-ranking-throxy/.trigger/tmp/build-iGHifw/Users/reyneill/Documents/code/persona-ranking-throxy/trigger/csv-import.mjs"
+    }
+  ],
+  "indexWorkerEntryPoint": "/Users/reyneill/Documents/code/persona-ranking-throxy/.trigger/tmp/build-iGHifw/private/tmp/bunx-501-trigger.dev@latest/node_modules/trigger.dev/dist/esm/entryPoints/dev-index-worker.mjs",
+  "otelImportHook": {
+    "include": [
+    ]
+  },
+  "outputHashes": {
+    "/Users/reyneill/Documents/code/persona-ranking-throxy/.trigger/tmp/build-iGHifw/Users/reyneill/Documents/code/persona-ranking-throxy/trigger.config.mjs": "pD7/9T9cEks",
+    "/Users/reyneill/Documents/code/persona-ranking-throxy/.trigger/tmp/build-iGHifw/Users/reyneill/Documents/code/persona-ranking-throxy/trigger.config.mjs.map": "2ANtmk59gj4",
+    "/Users/reyneill/Documents/code/persona-ranking-throxy/.trigger/tmp/build-iGHifw/Users/reyneill/Documents/code/persona-ranking-throxy/trigger/csv-import.mjs": "vF9nRUZ++LU",
+    "/Users/reyneill/Documents/code/persona-ranking-throxy/.trigger/tmp/build-iGHifw/Users/reyneill/Documents/code/persona-ranking-throxy/trigger/csv-import.mjs.map": "DezatRxO6u0",
+    "/Users/reyneill/Documents/code/persona-ranking-throxy/.trigger/tmp/build-iGHifw/chunk-3TPDWSMP.mjs": "uBCO4j/dHjI",
+    "/Users/reyneill/Documents/code/persona-ranking-throxy/.trigger/tmp/build-iGHifw/chunk-3TPDWSMP.mjs.map": "2OtXqMh9IB0",
+    "/Users/reyneill/Documents/code/persona-ranking-throxy/.trigger/tmp/build-iGHifw/chunk-I5LANLPO.mjs": "mSkTxndU2V4",
+    "/Users/reyneill/Documents/code/persona-ranking-throxy/.trigger/tmp/build-iGHifw/chunk-I5LANLPO.mjs.map": "LnwOK8z0qpM",
+    "/Users/reyneill/Documents/code/persona-ranking-throxy/.trigger/tmp/build-iGHifw/chunk-J4GPERM6.mjs": "wIHTO3wDgos",
+    "/Users/reyneill/Documents/code/persona-ranking-throxy/.trigger/tmp/build-iGHifw/chunk-J4GPERM6.mjs.map": "FcX+k0rU97I",
+    "/Users/reyneill/Documents/code/persona-ranking-throxy/.trigger/tmp/build-iGHifw/chunk-JIQK57WG.mjs": "BUuEpvztdLg",
+    "/Users/reyneill/Documents/code/persona-ranking-throxy/.trigger/tmp/build-iGHifw/chunk-JIQK57WG.mjs.map": "LMPzUuAiOIM",
+    "/Users/reyneill/Documents/code/persona-ranking-throxy/.trigger/tmp/build-iGHifw/chunk-LZ4ZEFIS.mjs": "CupY9GW/CY0",
+    "/Users/reyneill/Documents/code/persona-ranking-throxy/.trigger/tmp/build-iGHifw/chunk-LZ4ZEFIS.mjs.map": "G2LwgWhO8Jg",
+    "/Users/reyneill/Documents/code/persona-ranking-throxy/.trigger/tmp/build-iGHifw/chunk-RSYPXGOP.mjs": "eqH7lD1Xh3Y",
+    "/Users/reyneill/Documents/code/persona-ranking-throxy/.trigger/tmp/build-iGHifw/chunk-RSYPXGOP.mjs.map": "k+CE9aTzvcQ",
+    "/Users/reyneill/Documents/code/persona-ranking-throxy/.trigger/tmp/build-iGHifw/chunk-TPFJCLHS.mjs": "fFDA2ooOX+Y",
+    "/Users/reyneill/Documents/code/persona-ranking-throxy/.trigger/tmp/build-iGHifw/chunk-TPFJCLHS.mjs.map": "fEYI6Cpsxrs",
+    "/Users/reyneill/Documents/code/persona-ranking-throxy/.trigger/tmp/build-iGHifw/crypto.node-32MUVXEE.mjs": "pwmVq6itu4k",
+    "/Users/reyneill/Documents/code/persona-ranking-throxy/.trigger/tmp/build-iGHifw/crypto.node-32MUVXEE.mjs.map": "0b4tlwmkM3g",
+    "/Users/reyneill/Documents/code/persona-ranking-throxy/.trigger/tmp/build-iGHifw/crypto.node-ZT3PCXVE.mjs": "ZYzlXOudjQc",
+    "/Users/reyneill/Documents/code/persona-ranking-throxy/.trigger/tmp/build-iGHifw/crypto.node-ZT3PCXVE.mjs.map": "E5NgLhpD+uY",
+    "/Users/reyneill/Documents/code/persona-ranking-throxy/.trigger/tmp/build-iGHifw/dist-DC3B63VF.mjs": "n/s9UOb5acU",
+    "/Users/reyneill/Documents/code/persona-ranking-throxy/.trigger/tmp/build-iGHifw/dist-DC3B63VF.mjs.map": "CI8haG76yiw",
+    "/Users/reyneill/Documents/code/persona-ranking-throxy/.trigger/tmp/build-iGHifw/dist-W4ABWP4D.mjs": "kbHcVy2Vsv4",
+    "/Users/reyneill/Documents/code/persona-ranking-throxy/.trigger/tmp/build-iGHifw/dist-W4ABWP4D.mjs.map": "eOYmS1PMR08",
+    "/Users/reyneill/Documents/code/persona-ranking-throxy/.trigger/tmp/build-iGHifw/esm-IBFOZBGX.mjs": "2l1tQMEnTwk",
+    "/Users/reyneill/Documents/code/persona-ranking-throxy/.trigger/tmp/build-iGHifw/esm-IBFOZBGX.mjs.map": "v5Fp5VGqV78",
+    "/Users/reyneill/Documents/code/persona-ranking-throxy/.trigger/tmp/build-iGHifw/esm-JMXZ3Z2W.mjs": "8qks8G2m0Yo",
+    "/Users/reyneill/Documents/code/persona-ranking-throxy/.trigger/tmp/build-iGHifw/esm-JMXZ3Z2W.mjs.map": "VON93E1In1A",
+    "/Users/reyneill/Documents/code/persona-ranking-throxy/.trigger/tmp/build-iGHifw/getMachineId-bsd-2QLZS2HB.mjs": "jdatihj/vZQ",
+    "/Users/reyneill/Documents/code/persona-ranking-throxy/.trigger/tmp/build-iGHifw/getMachineId-bsd-2QLZS2HB.mjs.map": "dsEZ5mfkD04",
+    "/Users/reyneill/Documents/code/persona-ranking-throxy/.trigger/tmp/build-iGHifw/getMachineId-darwin-HW4D6VUK.mjs": "HLrYFQDbUbs",
+    "/Users/reyneill/Documents/code/persona-ranking-throxy/.trigger/tmp/build-iGHifw/getMachineId-darwin-HW4D6VUK.mjs.map": "us1DhE5nNQk",
+    "/Users/reyneill/Documents/code/persona-ranking-throxy/.trigger/tmp/build-iGHifw/getMachineId-linux-XNCXWJO6.mjs": "mhy36JZXXyo",
+    "/Users/reyneill/Documents/code/persona-ranking-throxy/.trigger/tmp/build-iGHifw/getMachineId-linux-XNCXWJO6.mjs.map": "bwiGjMxJ7jY",
+    "/Users/reyneill/Documents/code/persona-ranking-throxy/.trigger/tmp/build-iGHifw/getMachineId-unsupported-BNBFFBF2.mjs": "XXxyikvaI14",
+    "/Users/reyneill/Documents/code/persona-ranking-throxy/.trigger/tmp/build-iGHifw/getMachineId-unsupported-BNBFFBF2.mjs.map": "oA0zSkLQIaI",
+    "/Users/reyneill/Documents/code/persona-ranking-throxy/.trigger/tmp/build-iGHifw/getMachineId-win-I5CUML6C.mjs": "fOrC4rqr4A0",
+    "/Users/reyneill/Documents/code/persona-ranking-throxy/.trigger/tmp/build-iGHifw/getMachineId-win-I5CUML6C.mjs.map": "vyd8gM0I+pc",
+    "/Users/reyneill/Documents/code/persona-ranking-throxy/.trigger/tmp/build-iGHifw/private/tmp/bunx-501-trigger.dev@latest/node_modules/trigger.dev/dist/esm/entryPoints/dev-index-worker.mjs": "9m+vgHF8bns",
+    "/Users/reyneill/Documents/code/persona-ranking-throxy/.trigger/tmp/build-iGHifw/private/tmp/bunx-501-trigger.dev@latest/node_modules/trigger.dev/dist/esm/entryPoints/dev-index-worker.mjs.map": "2+wcNyBCti8",
+    "/Users/reyneill/Documents/code/persona-ranking-throxy/.trigger/tmp/build-iGHifw/private/tmp/bunx-501-trigger.dev@latest/node_modules/trigger.dev/dist/esm/entryPoints/dev-run-worker.mjs": "HCGIIcbIGNs",
+    "/Users/reyneill/Documents/code/persona-ranking-throxy/.trigger/tmp/build-iGHifw/private/tmp/bunx-501-trigger.dev@latest/node_modules/trigger.dev/dist/esm/entryPoints/dev-run-worker.mjs.map": "6NQyVcTrKeI",
+    "/Users/reyneill/Documents/code/persona-ranking-throxy/.trigger/tmp/build-iGHifw/s2s-TRP4GJS4.mjs": "7KqVldzpMCA",
+    "/Users/reyneill/Documents/code/persona-ranking-throxy/.trigger/tmp/build-iGHifw/s2s-TRP4GJS4.mjs.map": "c32zlQSCzd0"
+  },
+  "outputPath": "/Users/reyneill/Documents/code/persona-ranking-throxy/.trigger/tmp/build-iGHifw",
+  "packageVersion": "4.3.2",
+  "runWorkerEntryPoint": "/Users/reyneill/Documents/code/persona-ranking-throxy/.trigger/tmp/build-iGHifw/private/tmp/bunx-501-trigger.dev@latest/node_modules/trigger.dev/dist/esm/entryPoints/dev-run-worker.mjs",
+  "runtime": "node",
+  "sources": {
+    "package.json": {
+      "contentHash": "d1e5ead82195f46eaa639e3ed3210883",
+      "contents": "eJxtVDly4zAQzPUKlAJHBnjoshQ52A33C6qCgDEFiwSwGJCW1+W/b+GgSNvKoOnuOXpG/FgQstS8g+WBLC04NJpTx/VF6Yb6szPX9+Vj4AzgUBkdaCWrWJmi1qmB+yD2rocU4uLCG/jDNW/ABf6p188VW7FN0qBwynpcHsjHghBClhKGQNNw9SS8H1P41KtWZj1xvSat0p48PBBtr8SjIJRq87tTKRbESZHl6Lnzt7zpV4ZCooAAxleOekA/lovvHFe6AfSHFrjEEc8zFAmjEWMeR4mxXnXqHxysM53131UjTBM8E/ZWcg+HcRF/e3Dv39WJQ79wqIfOttxDyLUg5DM6LcGClqCFgpndzyeOQHtVOOAi9nasWJk3GvBz34ASRmMhjAP64gBo/B25K1ax6g53nq1i6xvDWNDO9B5cwRVFeQlTD0qm2zhWbDMjY295aK8YH/Q1Va3Z037WoucaPReXVJV6fmrjBR+fWF2x1cRzqmnAMQlDpp6NuaSUa7Zi9V0mystPBlcxtmXllF+0HJEO3CmuBVDe+7NxyseVHUu2m4wSLV7zIDP7BA7UcoeQU1fTiNJ40EOyaMfqqWbbCyWBTnaXbLOtJ2E49xCvtvNKIUr9GTrALFqz7Qg6LtWV9iovZD0Vu1Wp9vMekpXSdD8hPHMpdL6U7WQfGq3zymtWst3tX8dV+6a0pB24BrJuPY3j3yjXqgsXLxBvHZbzKx9+3T/0dG+FhMEb046Dl/Ot5+oCsbAG/VhiHbx7mmjvFrDQRqYG6838CDI6u/9gyO4ePFp2/OrZqdc0svJ446eS3D5RIb5nq/3UegKoMPpFNfT+0mfT3ZkqVozflAhu2J6toquLz8V/UjmtJg=="
+    },
+    "trigger.config.ts": {
+      "contentHash": "91a5a0dd1d8d695cd8f6968b73b4df2a",
+      "contents": "eJxVUU1LA0EMve+vCHNSWLtbCx7mpLSXgp4ULyIydjLT6HysmWxZLf3vskuL9ZKEvLyXF0KxyyywB4uOEi5zcuThAI5zBHUrTN4jzyzummI/m91CVRUOE8eiM32Qf8yLfQXQcf7AjWhQY/UmRoYvtyXXhb4rhYxHUTU0DciW8/B91VGHgRJWANwnoYgaVMoWVV0BhOzvcYdBgwrZT61ohlXPRignDTdtO4nNW4iUesECLjMEwx5h+fg82tlgKZT8uACFCYuG0SgAJvMe0K7TCncanAkF6wk4Hneam3beiWDspGi4rk9dSk8UMfeyTg9Fw7xt2/qP8Q9btGegMxvJfKbEJtkc6Qc1CPdHF4cxTcESFw0vatYcX6Je6+pwWf0C9w+LQw=="
+    },
+    "trigger/csv-import.ts": {
+      "contentHash": "7ff989e4a4f3b8e4fe28ec4ca672de25",
+      "contents": "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"
+    },
+    "tsconfig.json": {
+      "contentHash": "02fc19ad21338c2ab820a70136310db4",
+      "contents": "eJxtUU1Lw0AQvedXLHMMbaJehJ4E6cFiEfRYimyyQ7t2v9id1EjJf5fdJNVET8O892b2vdlLxhjUVjup0L84ktYEWLFLxhhjQNwfkGDFYP12d3N7D4seV7KCFduBsBoWLJZCEnpeKYw9BoMtwX5Qc6Xs5yauJd/gAIaTdM+yejxifZox5GVNU8zYtZYzDMPWikbhkyH01k1JnajofDAzwV8xWNXEsFFRNUYo9KPER/KMm2DNdtzya7MMVnFC0XOzVB+hjRs98pqWsRmHTO1RoyGupgNONQeZTr5LABtO36fmOkVIAQa4S3U8reN0/PkvxuChzNPPFGUO+2wc6KI8mlCNwOtbae8SzbkQBYXRap6X+d/2mqSIQyV9OQzlTNpTAs//06nVFGKS5B+wvRoCYwW+6+Gm+6zLvgEbXbUJ"
+    }
+  },
+  "target": "dev"
+}

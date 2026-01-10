@@ -1,6 +1,13 @@
 import { generateText, wrapLanguageModel, type LanguageModelUsage } from "ai"
 
 import { getOpenRouterModel } from "@/lib/ai/openrouter"
+import {
+  generateCacheKey,
+  generatePersonaHash,
+  checkRankingCache,
+  storeRankingCache,
+  calculateConfidence,
+} from "@/lib/ranking-cache"
 import { buildLeadScoreOutput } from "@/lib/ai/lead-score-output"
 import { AI_MODELS, COST_CONFIG } from "@/lib/constants"
 import {
@@ -402,6 +409,7 @@ const SHORTLIST_MULTIPLIER = parsePositiveInt(
 const SHORTLIST_MIN = parsePositiveInt(process.env.RANKING_SHORTLIST_MIN, 20)
 const SHORTLIST_MAX = parsePositiveInt(process.env.RANKING_SHORTLIST_MAX, 200)
 const RERANK_PASSES = parsePositiveInt(process.env.RANKING_PASSES, 2)
+const PARALLEL_COMPANIES = parsePositiveInt(process.env.RANKING_PARALLEL_COMPANIES, 5)
 
 function buildShortlistScorer(personaSpec: string): ShortlistScorer {
   return {
@@ -502,23 +510,38 @@ function extractJsonPayload(text: string): string | null {
   return null
 }
 
-function parseLeadScores(
-  text: string,
-  count: number
-): { scores: Array<number | null>; parsedCount: number } {
+type AxisScores = {
+  role?: number
+  seniority?: number
+  industry?: number
+  size?: number
+  data_quality?: number
+}
+
+type ParsedLeadScores = {
+  scores: Array<number | null>
+  axisScores: Array<AxisScores | null>
+  parsedCount: number
+}
+
+function parseLeadScores(text: string, count: number): ParsedLeadScores {
   const scores: Array<number | null> = Array.from(
     { length: count },
     (): number | null => null
   )
+  const axisScores: Array<AxisScores | null> = Array.from(
+    { length: count },
+    (): AxisScores | null => null
+  )
   let parsedCount = 0
   const payload = extractJsonPayload(text)
-  if (!payload) return { scores, parsedCount }
+  if (!payload) return { scores, axisScores, parsedCount }
 
   let parsed: unknown
   try {
     parsed = JSON.parse(payload)
   } catch {
-    return { scores, parsedCount }
+    return { scores, axisScores, parsedCount }
   }
 
   const items = Array.isArray(parsed)
@@ -527,7 +550,7 @@ function parseLeadScores(
       ? (parsed as { items: unknown[] }).items
       : null
 
-  if (!items) return { scores, parsedCount }
+  if (!items) return { scores, axisScores, parsedCount }
 
   for (const item of items) {
     if (!item || typeof item !== "object") continue
@@ -544,10 +567,20 @@ function parseLeadScores(
     if (!Number.isFinite(index) || index < 0 || index >= count) continue
     if (!Number.isFinite(score)) continue
     scores[index] = clampScore(score)
+    // Store axis scores if provided
+    if (typed.scores) {
+      axisScores[index] = {
+        role: typed.scores.role,
+        seniority: typed.scores.seniority,
+        industry: typed.scores.industry,
+        size: typed.scores.size,
+        data_quality: typed.scores.data_quality,
+      }
+    }
     parsedCount += 1
   }
 
-  return { scores, parsedCount }
+  return { scores, axisScores, parsedCount }
 }
 
 function computeGenerationCost(usage?: LanguageModelUsage): number | null {
@@ -1022,27 +1055,29 @@ export async function runRanking({
       rank: number
       selected: boolean
       reason: string
+      confidence: number
+      axis_scores: AxisScores | null
+      needs_review: boolean
     }> = []
     const companyResults: CompanyResults[] = []
-    let completedCompanies = 0
 
     // Check for abort before starting the main ranking loop
     checkAborted(signal)
 
-    for (const [companyId, companyLeads] of grouped.entries()) {
-      // Check for abort at the start of each company iteration
+    // Helper to process a single company
+    const processCompany = async (
+      companyId: string,
+      companyLeads: LeadRow[]
+    ): Promise<{
+      companyId: string
+      companyName: string
+      rankedLeads: RankedLead[]
+      rankingRows: typeof allRankingRows
+    } | null> => {
       checkAborted(signal)
 
       const companyName = companyLeads[0]?.company.name ?? "Unknown"
-      await emit({
-        type: "company_start",
-        runId: run.id,
-        companyId,
-        companyName,
-        index: completedCompanies + 1,
-        total: totalCompanies,
-      })
-      if (companyLeads.length === 0) continue
+      if (companyLeads.length === 0) return null
 
       const {
         entries: shortlistEntries,
@@ -1052,105 +1087,162 @@ export async function runRanking({
 
       const scoreTotals = Array.from({ length: companyLeads.length }, () => 0)
       const scoreCounts = Array.from({ length: companyLeads.length }, () => 0)
-      const passCount = Math.max(1, RERANK_PASSES)
+      const leadAxisScores: Array<AxisScores | null> = Array.from(
+        { length: companyLeads.length },
+        () => null
+      )
+      // Adaptive pass count: skip multi-pass for small shortlists (threshold: 20 leads)
+      const passCount = shortlistEntries.length <= 20 ? 1 : Math.max(1, RERANK_PASSES)
 
-      for (let passIndex = 0; passIndex < passCount; passIndex += 1) {
-        const orderedEntries =
-          passIndex === 0
-            ? shortlistEntries
-            : passIndex === 1
-              ? [...shortlistEntries].reverse()
-              : [
-                  ...shortlistEntries.slice(passIndex % shortlistEntries.length),
-                  ...shortlistEntries.slice(
-                    0,
-                    passIndex % shortlistEntries.length
-                  ),
-                ]
+      // Check cache before making LLM calls
+      const cacheKey = generateCacheKey(
+        personaSpec,
+        companyId,
+        companyLeads.map((l) => ({
+          id: l.id,
+          title: l.title,
+          full_name: l.full_name,
+        }))
+      )
+      const personaHash = generatePersonaHash(personaSpec)
+      const cached = await checkRankingCache(supabase, cacheKey, companyId)
 
-        const orderedLeads = orderedEntries.map((entry) => entry.lead)
-        if (orderedLeads.length === 0) continue
-
-        const prompt = buildLeadScoringPrompt(activeRankingPrompt, {
-          personaQuery: query,
-          companyName,
-          leads: orderedLeads,
+      let usedCache = false
+      if (cached) {
+        usedCache = true
+        companyLeads.forEach((lead, index) => {
+          const cachedScore = cached.scores.get(lead.id)
+          if (cachedScore) {
+            scoreTotals[index] = cachedScore.score
+            scoreCounts[index] = 1
+            leadAxisScores[index] = cachedScore.axisScores
+          }
         })
+      } else {
+        for (let passIndex = 0; passIndex < passCount; passIndex += 1) {
+          const orderedEntries =
+            passIndex === 0
+              ? shortlistEntries
+              : passIndex === 1
+                ? [...shortlistEntries].reverse()
+                : [
+                    ...shortlistEntries.slice(passIndex % shortlistEntries.length),
+                    ...shortlistEntries.slice(
+                      0,
+                      passIndex % shortlistEntries.length
+                    ),
+                  ]
 
-        let rankResult: Awaited<ReturnType<typeof generateText>>
-        try {
-          rankResult = await generateText({
-            model: rankModel,
-            prompt,
-            temperature: 0,
-            output: buildLeadScoreOutput(),
-            providerOptions: getResponseHealingOptions(),
+          const orderedLeads = orderedEntries.map((entry) => entry.lead)
+          if (orderedLeads.length === 0) continue
+
+          const prompt = buildLeadScoringPrompt(activeRankingPrompt, {
+            personaQuery: query,
+            companyName,
+            leads: orderedLeads,
           })
-        } catch (error) {
-          console.warn(
-            "Lead scoring with structured outputs failed; retrying without response format.",
-            error instanceof Error ? error.message : error
+
+          let rankResult: Awaited<ReturnType<typeof generateText>>
+          try {
+            rankResult = await generateText({
+              model: rankModel,
+              prompt,
+              temperature: 0,
+              output: buildLeadScoreOutput(),
+              providerOptions: getResponseHealingOptions(),
+              abortSignal: signal,
+            })
+          } catch (error) {
+            if (error instanceof Error && error.name === "AbortError") {
+              throw error
+            }
+            console.warn(
+              "Lead scoring with structured outputs failed; retrying without response format.",
+              error instanceof Error ? error.message : error
+            )
+            rankResult = await generateText({
+              model: rankModel,
+              prompt,
+              temperature: 0,
+              abortSignal: signal,
+            })
+          }
+
+          const { scores, axisScores, parsedCount } = parseLeadScores(
+            rankResult.text,
+            orderedLeads.length
           )
-          rankResult = await generateText({
-            model: rankModel,
-            prompt,
-            temperature: 0,
-          })
+          if (parsedCount === 0) {
+            console.warn(
+              "Lead scoring output could not be parsed; defaulting to zero scores.",
+              { companyId, companyName, passIndex: passIndex + 1 }
+            )
+          } else {
+            scores.forEach((score, localIndex) => {
+              if (score === null) return
+              const originalIndex = orderedEntries[localIndex]?.originalIndex
+              if (originalIndex === undefined) return
+              scoreTotals[originalIndex] += score
+              scoreCounts[originalIndex] += 1
+              if (axisScores[localIndex]) {
+                leadAxisScores[originalIndex] = axisScores[localIndex]
+              }
+            })
+          }
+
+          const providerMeta = rankResult.providerMetadata as
+            | OpenRouterUsageMetadata
+            | undefined
+          const openrouterUsage = providerMeta?.openrouter?.usage ?? null
+          const costUsd =
+            typeof openrouterUsage?.cost === "number"
+              ? openrouterUsage.cost
+              : computeGenerationCost(rankResult.usage)
+
+          // Record AI call (fire and forget to not slow down parallel processing)
+          recordAiCall(supabase, {
+            run_id: run.id,
+            provider: "openrouter",
+            model: rankResult.response?.modelId ?? DEFAULT_RANK_MODEL,
+            operation: "rank",
+            input_tokens: rankResult.usage?.inputTokens ?? null,
+            output_tokens: rankResult.usage?.outputTokens ?? null,
+            total_tokens: rankResult.usage?.totalTokens ?? null,
+            documents_count: orderedLeads.length,
+            cost_usd: costUsd,
+            metadata: {
+              companyId,
+              companyName: companyLeads[0]?.company.name ?? null,
+              openrouterUsage: openrouterUsage ?? null,
+              pass: passIndex + 1,
+              passes: passCount,
+              shortlistCount: shortlistEntries.length,
+              leadCount: companyLeads.length,
+            },
+          }).catch(() => {})
         }
-
-        const { scores, parsedCount } = parseLeadScores(
-          rankResult.text,
-          orderedLeads.length
-        )
-        if (parsedCount === 0) {
-          console.warn(
-            "Lead scoring output could not be parsed; defaulting to zero scores.",
-            { companyId, companyName, passIndex: passIndex + 1 }
-          )
-        } else {
-          scores.forEach((score, localIndex) => {
-            if (score === null) return
-            const originalIndex = orderedEntries[localIndex]?.originalIndex
-            if (originalIndex === undefined) return
-            scoreTotals[originalIndex] += score
-            scoreCounts[originalIndex] += 1
-          })
-        }
-
-        const providerMeta = rankResult.providerMetadata as
-          | OpenRouterUsageMetadata
-          | undefined
-        const openrouterUsage = providerMeta?.openrouter?.usage ?? null
-        const costUsd =
-          typeof openrouterUsage?.cost === "number"
-            ? openrouterUsage.cost
-            : computeGenerationCost(rankResult.usage)
-
-        await recordAiCall(supabase, {
-          run_id: run.id,
-          provider: "openrouter",
-          model: rankResult.response?.modelId ?? DEFAULT_RANK_MODEL,
-          operation: "rank",
-          input_tokens: rankResult.usage?.inputTokens ?? null,
-          output_tokens: rankResult.usage?.outputTokens ?? null,
-          total_tokens: rankResult.usage?.totalTokens ?? null,
-          documents_count: orderedLeads.length,
-          cost_usd: costUsd,
-          metadata: {
-            companyId,
-            companyName: companyLeads[0]?.company.name ?? null,
-            openrouterUsage: openrouterUsage ?? null,
-            pass: passIndex + 1,
-            passes: passCount,
-            shortlistCount: shortlistEntries.length,
-            leadCount: companyLeads.length,
-          },
-        })
       }
 
       const scores = scoreTotals.map((total, index) =>
         scoreCounts[index] > 0 ? total / scoreCounts[index] : null
       )
+
+      if (!usedCache) {
+        const cacheResults = companyLeads.map((lead, index) => ({
+          leadId: lead.id,
+          score: scores[index] ?? 0,
+          axisScores: leadAxisScores[index],
+        }))
+        storeRankingCache(
+          supabase,
+          cacheKey,
+          companyId,
+          personaHash,
+          cacheResults
+        ).catch((err) =>
+          console.warn("Failed to store ranking cache:", err)
+        )
+      }
 
       const sorted = scores
         .map((score, index) => ({
@@ -1161,17 +1253,14 @@ export async function runRanking({
         .sort((a, b) => {
           const scoreA = a.score ?? -1
           const scoreB = b.score ?? -1
-          if (scoreB !== scoreA) {
-            return scoreB - scoreA
-          }
-          if (b.shortlistScore !== a.shortlistScore) {
-            return b.shortlistScore - a.shortlistScore
-          }
+          if (scoreB !== scoreA) return scoreB - scoreA
+          if (b.shortlistScore !== a.shortlistScore) return b.shortlistScore - a.shortlistScore
           return a.originalIndex - b.originalIndex
         })
 
       let relevantRank = 1
       const rankedLeads: RankedLead[] = []
+      const rankingRows: typeof allRankingRows = []
 
       sorted.forEach((item, index) => {
         const lead = companyLeads[item.originalIndex]
@@ -1180,9 +1269,7 @@ export async function runRanking({
         const isRelevant = score !== null && score >= minScore
         const selected = isRelevant && relevantRank <= topN
 
-        if (isRelevant) {
-          relevantRank += 1
-        }
+        if (isRelevant) relevantRank += 1
 
         const reason = buildHeuristicReason({
           title: lead.title,
@@ -1205,7 +1292,13 @@ export async function runRanking({
           reason,
         })
 
-        allRankingRows.push({
+        const axisScoresForLead = leadAxisScores[item.originalIndex]
+        const { confidence, needsReview } = calculateConfidence(
+          score,
+          axisScoresForLead
+        )
+
+        rankingRows.push({
           run_id: run.id,
           lead_id: lead.id,
           company_id: companyId,
@@ -1214,28 +1307,74 @@ export async function runRanking({
           rank: index + 1,
           selected,
           reason,
+          confidence,
+          axis_scores: axisScoresForLead,
+          needs_review: needsReview,
         })
       })
 
-      companyResults.push({
-        companyId,
-        companyName,
-        leads: rankedLeads,
-      })
+      return { companyId, companyName, rankedLeads, rankingRows }
+    }
 
-      completedCompanies += 1
-      await emit({
-        type: "company_result",
-        runId: run.id,
-        company: {
+    // Process companies with streaming concurrency (start new work as slots free up)
+    const companyEntries = Array.from(grouped.entries())
+    let nextIndex = 0
+    let startedCount = 0
+    let finishedCount = 0
+
+    const processWithSlot = async (): Promise<void> => {
+      while (nextIndex < companyEntries.length) {
+        checkAborted(signal)
+
+        const currentIndex = nextIndex
+        nextIndex += 1
+        startedCount += 1
+
+        const [companyId, companyLeads] = companyEntries[currentIndex]!
+        const companyName = companyLeads[0]?.company.name ?? "Unknown"
+
+        await emit({
+          type: "company_start",
+          runId: run.id,
           companyId,
           companyName,
-          leads: rankedLeads,
-        },
-        completed: completedCompanies,
-        total: totalCompanies,
-      })
+          index: startedCount,
+          total: totalCompanies,
+        })
+
+        const result = await processCompany(companyId, companyLeads)
+
+        if (result) {
+          allRankingRows.push(...result.rankingRows)
+          companyResults.push({
+            companyId: result.companyId,
+            companyName: result.companyName,
+            leads: result.rankedLeads,
+          })
+
+          finishedCount += 1
+          await emit({
+            type: "company_result",
+            runId: run.id,
+            company: {
+              companyId: result.companyId,
+              companyName: result.companyName,
+              leads: result.rankedLeads,
+            },
+            completed: finishedCount,
+            total: totalCompanies,
+          })
+        } else {
+          finishedCount += 1
+        }
+      }
     }
+
+    // Start parallel workers that each process companies sequentially
+    const workerCount = Math.min(PARALLEL_COMPANIES, companyEntries.length)
+    await Promise.all(
+      Array.from({ length: workerCount }, () => processWithSlot())
+    )
 
     if (allRankingRows.length > 0) {
       const { error: insertError } = await supabase
@@ -1251,7 +1390,7 @@ export async function runRanking({
     await emit({
       type: "complete",
       runId: run.id,
-      completed: completedCompanies,
+      completed: companyResults.length,
       total: totalCompanies,
     })
 

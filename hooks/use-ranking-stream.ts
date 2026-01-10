@@ -15,6 +15,17 @@ type RankingParams = {
   ingestionId: string | null
 }
 
+type IngestionProgress = {
+  status: string
+  processedRows: number
+  totalRows: number
+  percentage: number
+  leadCount: number
+  companyCount: number
+  skippedCount: number
+  currentPhase: string
+}
+
 type UseRankingStreamOptions = {
   onResults: React.Dispatch<React.SetStateAction<RankingResponse | null>>
   onLoadingChange: (loading: boolean) => void
@@ -29,12 +40,81 @@ const INITIAL_PROGRESS: RankingProgress = {
   message: "",
 }
 
+const INITIAL_INGESTION_PROGRESS: IngestionProgress = {
+  status: "idle",
+  processedRows: 0,
+  totalRows: 0,
+  percentage: 0,
+  leadCount: 0,
+  companyCount: 0,
+  skippedCount: 0,
+  currentPhase: "",
+}
+
+// Poll for ingestion completion
+async function waitForIngestion(
+  ingestionId: string,
+  onProgress: (progress: IngestionProgress) => void
+): Promise<{ leadCount: number; companyCount: number; skippedCount: number }> {
+  const pollInterval = 1000 // 1 second
+  const maxPolls = 600 // 10 minutes max
+
+  for (let i = 0; i < maxPolls; i++) {
+    const response = await fetch(`/api/ingest/${ingestionId}`)
+    const data = await response.json()
+
+    if (!response.ok) {
+      throw new Error(data.error ?? "Failed to check ingestion status")
+    }
+
+    onProgress({
+      status: data.status,
+      processedRows: data.processedRows ?? 0,
+      totalRows: data.totalRows ?? 0,
+      percentage:
+        data.totalRows > 0
+          ? Math.round((data.processedRows / data.totalRows) * 100)
+          : 0,
+      leadCount: data.leadCount ?? 0,
+      companyCount: data.companyCount ?? 0,
+      skippedCount: data.skippedCount ?? 0,
+      currentPhase:
+        data.status === "processing"
+          ? `Processing ${data.processedRows?.toLocaleString() ?? 0}/${data.totalRows?.toLocaleString() ?? 0} rows`
+          : data.status === "completed"
+            ? "Import complete"
+            : data.status === "failed"
+              ? `Error: ${data.errorMessage}`
+              : "Preparing...",
+    })
+
+    if (data.status === "completed") {
+      return {
+        leadCount: data.leadCount ?? 0,
+        companyCount: data.companyCount ?? 0,
+        skippedCount: data.skippedCount ?? 0,
+      }
+    }
+
+    if (data.status === "failed") {
+      throw new Error(data.errorMessage ?? "Ingestion failed")
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, pollInterval))
+  }
+
+  throw new Error("Ingestion timeout - please try again")
+}
+
 export function useRankingStream(options: UseRankingStreamOptions) {
   const { onResults, onLoadingChange, onStatsRefresh } = options
   const [isRunning, setIsRunning] = React.useState(false)
   const [isUploading, setIsUploading] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
-  const [progress, setProgress] = React.useState<RankingProgress>(INITIAL_PROGRESS)
+  const [progress, setProgress] =
+    React.useState<RankingProgress>(INITIAL_PROGRESS)
+  const [ingestionProgress, setIngestionProgress] =
+    React.useState<IngestionProgress>(INITIAL_INGESTION_PROGRESS)
 
   const runRanking = React.useCallback(
     async (params: RankingParams, csvFile: File | null) => {
@@ -52,6 +132,7 @@ export function useRankingStream(options: UseRankingStreamOptions) {
         completed: 0,
         message: "Preparing ranking...",
       })
+      setIngestionProgress(INITIAL_INGESTION_PROGRESS)
 
       try {
         const trimmedSpec = personaSpec.trim()
@@ -59,6 +140,17 @@ export function useRankingStream(options: UseRankingStreamOptions) {
         // Handle CSV upload if provided
         if (csvFile) {
           setIsUploading(true)
+          setIngestionProgress({
+            status: "uploading",
+            processedRows: 0,
+            totalRows: 0,
+            percentage: 0,
+            leadCount: 0,
+            companyCount: 0,
+            skippedCount: 0,
+            currentPhase: "Uploading CSV...",
+          })
+
           const formData = new FormData()
           formData.append("file", csvFile)
 
@@ -67,13 +159,28 @@ export function useRankingStream(options: UseRankingStreamOptions) {
             body: formData,
           })
           const ingestData = await ingestResponse.json()
+
           if (!ingestResponse.ok) {
-            throw new Error(ingestData.error ?? "Failed to ingest CSV")
+            throw new Error(ingestData.error ?? "Failed to upload CSV")
           }
 
-          ingestionId = ingestData.ingestionId
+          const newIngestionId = ingestData.ingestionId as string
+          ingestionId = newIngestionId
+
+          // Wait for background processing to complete
+          setIngestionProgress((prev) => ({
+            ...prev,
+            status: "processing",
+            currentPhase: "Processing CSV in background...",
+          }))
+
+          const result = await waitForIngestion(
+            newIngestionId,
+            setIngestionProgress
+          )
+
           toast.success("Leads uploaded", {
-            description: `Loaded ${ingestData.leadCount} leads from ${csvFile.name} (${ingestData.companyCount} companies, ${ingestData.skippedCount} skipped).`,
+            description: `Loaded ${result.leadCount.toLocaleString()} leads from ${csvFile.name} (${result.companyCount.toLocaleString()} companies, ${result.skippedCount.toLocaleString()} skipped).`,
           })
           setIsUploading(false)
         }
@@ -251,8 +358,8 @@ export function useRankingStream(options: UseRankingStreamOptions) {
     isUploading,
     error,
     progress,
+    ingestionProgress,
     runRanking,
     setError,
   }
 }
-

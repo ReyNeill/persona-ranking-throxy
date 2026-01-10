@@ -1,0 +1,7 @@
+{
+  "version": 3,
+  "sources": ["../../../../../../../../trigger.config.ts"],
+  "sourcesContent": ["import { defineConfig } from \"@trigger.dev/sdk/v3\"\n\nexport default defineConfig({\n  // throxy-pipeline\n  project: \"proj_tatxqfhifplupssiaget\",\n\n  runtime: \"node\",\n  logLevel: \"log\",\n\n  // 10 minutes for large CSV processing\n  maxDuration: 600,\n\n  retries: {\n    enabledInDev: false,\n    default: {\n      maxAttempts: 2,\n      minTimeoutInMs: 1000,\n      maxTimeoutInMs: 30000,\n      factor: 2,\n      randomize: true,\n    },\n  },\n\n  dirs: [\"./trigger\"],\n  build: {},\n})\nexport const resolveEnvVars = undefined;"],
+  "mappings": ";;;;;;;;;AAAA;AAEA,IAAO,yBAAQ,aAAa;AAAA;AAAA,EAE1B,SAAS;AAAA,EAET,SAAS;AAAA,EACT,UAAU;AAAA;AAAA,EAGV,aAAa;AAAA,EAEb,SAAS;AAAA,IACP,cAAc;AAAA,IACd,SAAS;AAAA,MACP,aAAa;AAAA,MACb,gBAAgB;AAAA,MAChB,gBAAgB;AAAA,MAChB,QAAQ;AAAA,MACR,WAAW;AAAA,IACb;AAAA,EACF;AAAA,EAEA,MAAM,CAAC,WAAW;AAAA,EAClB,OAAO,CAAC;AACV,CAAC;AACM,IAAM,iBAAiB;",
+  "names": []
+}
